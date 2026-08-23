@@ -50,7 +50,7 @@ def execute(command: str, x_api_key: str = Header(default="")):
     if not _lock.acquire(blocking=False):
         raise HTTPException(status_code=409, detail="已有 terraform 任务在执行中")
     try:
-        extra = ["-input=false"]
+        extra = ["-input=false"] if command in ("init", "plan", "apply", "destroy") else []        
         result = run_terraform(command, extra)
         if not result["success"]:
             raise HTTPException(status_code=500, detail=result)
