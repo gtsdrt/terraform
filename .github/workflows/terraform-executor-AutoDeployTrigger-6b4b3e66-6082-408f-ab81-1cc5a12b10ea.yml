@@ -13,8 +13,6 @@ on:
   # Allow manual trigger 
   workflow_dispatch:      
 
-# Allow manual trigger 
-  workflow_dispatch:
 
 jobs:
   build-and-deploy:
