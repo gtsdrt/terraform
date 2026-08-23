@@ -37,12 +37,15 @@ jobs:
           appSourcePath: ${{ github.workspace }}
           _dockerfilePathKey_: Dockerfile
           _targetLabelKey_: build
+          acrName: gtsdrtterraform
+          containerAppEnvironment: terraform-env 
           registryUrl: 
           registryUsername: ${{ secrets.TERRAFORMEXECUTOR_REGISTRY_USERNAME }}
           registryPassword: ${{ secrets.TERRAFORMEXECUTOR_REGISTRY_PASSWORD }}
           containerAppName: terraform-executor
           resourceGroup: terraform
           imageToBuild: default/[parameters('containerAppName')]:${{ github.sha }}
+          targetPort: 8000
           _buildArgumentsKey_: |
             _buildArgumentsValues_
 
