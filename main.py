@@ -13,6 +13,13 @@ ALLOWED = {"init", "plan", "apply", "destroy", "output", "validate"}
 # 防止并发执行同一 state
 _lock = threading.Lock()
 
+def terraform_env() -> dict:
+    env = os.environ.copy()
+    # 桥接 Container Apps 的 identity 端点给只认 MSI_ENDPOINT 的客户端
+    if env.get("IDENTITY_ENDPOINT") and not env.get("MSI_ENDPOINT"):
+        env["MSI_ENDPOINT"] = env["IDENTITY_ENDPOINT"]
+        env["MSI_SECRET"] = env.get("IDENTITY_HEADER", "")
+    return env
 
 def run_terraform(command: str, extra_args: list[str]) -> dict:
     if command not in ALLOWED:
@@ -28,6 +35,7 @@ def run_terraform(command: str, extra_args: list[str]) -> dict:
         capture_output=True,
         text=True,
         timeout=1800,  # 30 分钟上限
+        env=terraform_env()
     )
     return {
         "command": " ".join(args),
