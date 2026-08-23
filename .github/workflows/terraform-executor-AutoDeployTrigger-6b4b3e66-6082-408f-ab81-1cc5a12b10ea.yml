@@ -13,6 +13,9 @@ on:
   # Allow manual trigger 
   workflow_dispatch:      
 
+# Allow manual trigger 
+  workflow_dispatch:
+
 jobs:
   build-and-deploy:
     runs-on: ubuntu-latest
@@ -22,7 +25,7 @@ jobs:
 
     steps:
       - name: Checkout to the branch
-        uses: actions/checkout@v4
+        uses: actions/checkout@v2
 
       - name: Azure Login
         uses: azure/login@v2
@@ -35,12 +38,16 @@ jobs:
         uses: azure/container-apps-deploy-action@v2
         with:
           appSourcePath: ${{ github.workspace }}
-          acrName: gtsdrtterraform
+          _dockerfilePathKey_: Dockerfile
+          _targetLabelKey_: build
+          registryUrl: gtsdrtansible.azurecr.io
+          registryUsername: ${{ secrets.TERRAFORMEXECUTOR_REGISTRY_USERNAME }}
+          registryPassword: ${{ secrets.TERRAFORMEXECUTOR_REGISTRY_PASSWORD }}
           containerAppName: terraform-executor
           resourceGroup: terraform
-          containerAppEnvironment: terraform-env
           imageToBuild: gtsdrtterraform.azurecr.io/terraform-executor:${{ github.sha }}
-          targetPort: 8000
+          _buildArgumentsKey_: |
+            _buildArgumentsValues_
 
 
 
