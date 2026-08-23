@@ -34,13 +34,13 @@ jobs:
       - name: Build and push container image to registry
         uses: azure/container-apps-deploy-action@v2
         with:
-         appSourcePath: ${{ github.workspace }}
-         acrName: gtsdrtterraform
-         containerAppName: terraform-executor
-         resourceGroup: terraform
-         containerAppEnvironment: terraform-env
-         imageToBuild: gtsdrtterraform.azurecr.io/terraform-executor:${{ github.sha }}
-         targetPort: 8000
+          appSourcePath: ${{ github.workspace }}
+          acrName: gtsdrtterraform
+          containerAppName: terraform-executor
+          resourceGroup: terraform
+          containerAppEnvironment: terraform-env
+          imageToBuild: gtsdrtterraform.azurecr.io/terraform-executor:${{ github.sha }}
+          targetPort: 8000
 
 
 
