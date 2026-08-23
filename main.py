@@ -1,6 +1,9 @@
 import os
 import subprocess
 import threading
+import httpx
+import uvicorn
+from fastapi import Query
 
 from fastapi import FastAPI, Header, HTTPException
 
@@ -13,14 +16,42 @@ ALLOWED = {"init", "plan", "apply", "destroy", "output", "validate"}
 # 防止并发执行同一 state
 _lock = threading.Lock()
 
+
+# ---------- IMDS 兼容层：IMDS 协议 -> Container Apps 身份端点 ----------
+imds = FastAPI()
+
+
+@imds.get("/metadata/identity/oauth2/token")
+async def imds_token(resource: str = Query(...)):
+    endpoint = os.environ.get("IDENTITY_ENDPOINT")
+    header = os.environ.get("IDENTITY_HEADER")
+    if not endpoint or not header:
+        raise HTTPException(status_code=500, detail="identity endpoint not available")
+    async with httpx.AsyncClient(timeout=10.0) as client:
+        resp = await client.get(
+            endpoint,
+            params={"api-version": "2019-08-01", "resource": resource},
+            headers={"X-IDENTITY-HEADER": header},
+        )
+        resp.raise_for_status()
+        return resp.json()
+
+
+def _start_imds_shim():
+    # 只绑定 127.0.0.1，外部流量（ingress）永远到不了这里，安全
+    uvicorn.run(imds, host="127.0.0.1", port=4567, log_level="error")
+
+
+threading.Thread(target=_start_imds_shim, daemon=True).start()
+
+IMDS_SHIM_URL = "http://127.0.0.1:4567/metadata/identity/oauth2/token"
+
 def terraform_env() -> dict:
     env = os.environ.copy()
-    endpoint = env.get("IDENTITY_ENDPOINT")
-    if endpoint:
-        # 桥接 Container Apps 的 identity 端点给各种 MSI 客户端
-        env.setdefault("MSI_ENDPOINT", endpoint)
-        env.setdefault("ARM_MSI_ENDPOINT", endpoint)
-        env.setdefault("MSI_SECRET", env.get("IDENTITY_HEADER", ""))
+    if env.get("IDENTITY_ENDPOINT"):
+        env["MSI_ENDPOINT"] = IMDS_SHIM_URL
+        env["ARM_MSI_ENDPOINT"] = IMDS_SHIM_URL
+        env["MSI_SECRET"] = env.get("IDENTITY_HEADER", "")
     return env
 
 def run_terraform(command: str, extra_args: list[str]) -> dict:
