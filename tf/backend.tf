@@ -5,5 +5,6 @@ terraform {
     container_name       = "tfstate"
     key                  = "executor.tfstate"
     use_azuread_auth     = true
+    use_msi              = true
   }
 }
