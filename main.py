@@ -50,7 +50,13 @@ def execute(command: str, x_api_key: str = Header(default="")):
     if not _lock.acquire(blocking=False):
         raise HTTPException(status_code=409, detail="已有 terraform 任务在执行中")
     try:
-        extra = ["-input=false"] if command in ("init", "plan", "apply", "destroy") else []        
+        # 容器文件系统是临时的，.terraform 丢失时自动重新初始化
+        if command != "init" and not os.path.isdir(os.path.join(TF_DIR, ".terraform")):
+            init_result = run_terraform("init", ["-input=false"])
+            if not init_result["success"]:
+                raise HTTPException(status_code=500, detail={"stage": "init", **init_result})
+
+        extra = ["-input=false"] if command in ("init", "plan", "apply", "destroy") else []
         result = run_terraform(command, extra)
         if not result["success"]:
             raise HTTPException(status_code=500, detail=result)
