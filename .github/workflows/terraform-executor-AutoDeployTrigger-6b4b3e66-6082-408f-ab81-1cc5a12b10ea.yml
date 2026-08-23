@@ -22,7 +22,7 @@ jobs:
 
     steps:
       - name: Checkout to the branch
-        uses: actions/checkout@v2
+        uses: actions/checkout@v4
 
       - name: Azure Login
         uses: azure/login@v2
@@ -35,18 +35,12 @@ jobs:
         uses: azure/container-apps-deploy-action@v2
         with:
           appSourcePath: ${{ github.workspace }}
-          _dockerfilePathKey_: Dockerfile
-          _targetLabelKey_: build
           acrName: gtsdrtterraform
           containerAppEnvironment: terraform-env 
-          registryUrl: 
-          registryUsername: ${{ secrets.TERRAFORMEXECUTOR_REGISTRY_USERNAME }}
-          registryPassword: ${{ secrets.TERRAFORMEXECUTOR_REGISTRY_PASSWORD }}
           containerAppName: terraform-executor
           resourceGroup: terraform
           imageToBuild: default/[parameters('containerAppName')]:${{ github.sha }}
           targetPort: 8000
-          _buildArgumentsKey_: |
-            _buildArgumentsValues_
+
 
 
