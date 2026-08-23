@@ -1,16 +1,59 @@
 import os
+import subprocess
+import threading
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Header, HTTPException
 
-app = FastAPI(title="Terraform Container App Demo")
+app = FastAPI(title="Terraform Executor")
 
-@app.get("/")
-def read_root():
+TF_DIR = os.getenv("TF_DIR", "/app/tf")
+API_KEY = os.getenv("EXECUTOR_API_KEY", "")
+ALLOWED = {"init", "plan", "apply", "destroy", "output", "validate"}
+
+# 防止并发执行同一 state
+_lock = threading.Lock()
+
+
+def run_terraform(command: str, extra_args: list[str]) -> dict:
+    if command not in ALLOWED:
+        raise HTTPException(status_code=400, detail=f"不支持的命令: {command}")
+
+    args = ["terraform", command, "-no-color"] + extra_args
+    if command in ("apply", "destroy"):
+        args.append("-auto-approve")
+
+    proc = subprocess.run(
+        args,
+        cwd=TF_DIR,
+        capture_output=True,
+        text=True,
+        timeout=1800,  # 30 分钟上限
+    )
     return {
-        "message": "Hello from Azure Container App",
-        "port": os.getenv("PORT", "80")
+        "command": " ".join(args),
+        "exit_code": proc.returncode,
+        "stdout": proc.stdout[-20000:],  # 截断防止响应过大
+        "stderr": proc.stderr[-20000:],
+        "success": proc.returncode == 0,
     }
+
 
 @app.get("/health")
 def health():
     return {"status": "healthy"}
+
+
+@app.post("/terraform/{command}")
+def execute(command: str, x_api_key: str = Header(default="")):
+    if API_KEY and x_api_key != API_KEY:
+        raise HTTPException(status_code=401, detail="invalid api key")
+    if not _lock.acquire(blocking=False):
+        raise HTTPException(status_code=409, detail="已有 terraform 任务在执行中")
+    try:
+        extra = ["-input=false"]
+        result = run_terraform(command, extra)
+        if not result["success"]:
+            raise HTTPException(status_code=500, detail=result)
+        return result
+    finally:
+        _lock.release()

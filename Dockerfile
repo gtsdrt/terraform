@@ -1,19 +1,25 @@
-FROM python:3.12-slim
+FROM ubuntu:24.04
+
+ARG TERRAFORM_VERSION=1.9.8
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        curl unzip ca-certificates python3 python3-pip \
+    && rm -rf /var/lib/apt/lists/*
+
+# 安装 Terraform
+RUN curl -fsSL "https://releases.hashicorp.com/terraform/${TERRAFORM_VERSION}/terraform_${TERRAFORM_VERSION}_linux_amd64.zip" -o /tmp/tf.zip \
+    && unzip /tmp/tf.zip -d /usr/local/bin \
+    && rm /tmp/tf.zip \
+    && terraform version
 
 WORKDIR /app
 
-# 先复制依赖文件，利用 Docker 缓存
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+# Ubuntu 24.04 的 pip 默认禁止装到系统环境，需加 --break-system-packages
+RUN pip3 install --no-cache-dir --break-system-packages -r requirements.txt
 
-# 复制应用代码
 COPY main.py .
+COPY tf/ ./tf/
 
-# 创建非 root 用户
-RUN useradd --create-home appuser
-USER appuser
-
-# Container App 默认注入 PORT 环境变量，默认 80
-EXPOSE 80
-
-CMD ["sh", "-c", "uvicorn main:app --host 0.0.0.0 --port ${PORT:-80}"]
+EXPOSE 8000
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
