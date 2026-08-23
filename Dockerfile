@@ -1,33 +1,19 @@
-FROM ubuntu:24.04
-
-ENV DEBIAN_FRONTEND=noninteractive
-
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    curl gnupg lsb-release ca-certificates python3 python3-pip \
-    && rm -rf /var/lib/apt/lists/*
-
-# 安装 Terraform
-RUN curl -fsSL https://apt.releases.hashicorp.com/gpg | \
-    gpg --dearmor -o /usr/share/keyrings/hashicorp-archive-keyring.gpg && \
-    echo "deb [signed-by=/usr/share/keyrings/hashicorp-archive-keyring.gpg] https://apt.releases.hashicorp.com $(lsb_release -cs) main" > \
-    /etc/apt/sources.list.d/hashicorp.list && \
-    apt-get update && apt-get install -y terraform && \
-    rm -rf /var/lib/apt/lists/*
-
-# 安装 Azure CLI，用于 Managed Identity 登录
-RUN curl -sL https://aka.ms/InstallAzureCLIDeb | bash
+FROM python:3.12-slim
 
 WORKDIR /app
 
+# 先复制依赖文件，利用 Docker 缓存
 COPY requirements.txt .
-RUN pip3 install --break-system-packages --no-cache-dir -r requirements.txt
+RUN pip install --no-cache-dir -r requirements.txt
 
-COPY app.py .
-COPY tf /tf
+# 复制应用代码
+COPY main.py .
 
-ENV TF_ROOT=/tf \
-    ARM_USE_MSI=true
+# 创建非 root 用户
+RUN useradd --create-home appuser
+USER appuser
 
-EXPOSE 8000
+# Container App 默认注入 PORT 环境变量，默认 80
+EXPOSE 80
 
-CMD ["gunicorn", "-w", "1", "-b", "0.0.0.0:8000", "app:app"]
+CMD ["sh", "-c", "uvicorn main:app --host 0.0.0.0 --port ${PORT:-80}"]
