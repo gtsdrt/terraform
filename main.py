@@ -15,10 +15,12 @@ _lock = threading.Lock()
 
 def terraform_env() -> dict:
     env = os.environ.copy()
-    # 桥接 Container Apps 的 identity 端点给只认 MSI_ENDPOINT 的客户端
-    if env.get("IDENTITY_ENDPOINT") and not env.get("MSI_ENDPOINT"):
-        env["MSI_ENDPOINT"] = env["IDENTITY_ENDPOINT"]
-        env["MSI_SECRET"] = env.get("IDENTITY_HEADER", "")
+    endpoint = env.get("IDENTITY_ENDPOINT")
+    if endpoint:
+        # 桥接 Container Apps 的 identity 端点给各种 MSI 客户端
+        env.setdefault("MSI_ENDPOINT", endpoint)
+        env.setdefault("ARM_MSI_ENDPOINT", endpoint)
+        env.setdefault("MSI_SECRET", env.get("IDENTITY_HEADER", ""))
     return env
 
 def run_terraform(command: str, extra_args: list[str]) -> dict:
