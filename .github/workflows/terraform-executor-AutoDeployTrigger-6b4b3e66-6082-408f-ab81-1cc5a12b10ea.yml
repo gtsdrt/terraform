@@ -38,7 +38,7 @@ jobs:
           appSourcePath: ${{ github.workspace }}
           _dockerfilePathKey_: Dockerfile
           _targetLabelKey_: build
-          registryUrl: gtsdrtansible.azurecr.io
+          registryUrl: gtsdrtterraform.azurecr.io
           registryUsername: ${{ secrets.TERRAFORMEXECUTOR_REGISTRY_USERNAME }}
           registryPassword: ${{ secrets.TERRAFORMEXECUTOR_REGISTRY_PASSWORD }}
           containerAppName: terraform-executor
