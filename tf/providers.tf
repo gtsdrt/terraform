@@ -9,5 +9,5 @@ terraform {
 
 provider "azurerm" {
   features {}
-  # 认证靠容器环境变量 ARM_USE_MSI / ARM_CLIENT_ID 等，这里不用写凭据
+  resource_provider_registrations = "none"
 }
