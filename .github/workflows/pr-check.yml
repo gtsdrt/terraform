@@ -26,50 +26,30 @@ jobs:
     defaults:
       run:
         working-directory: ${{ matrix.dir }}
-
     steps:
       - uses: actions/checkout@v4
-
-      - uses: azure/login@v2
-        with:
-          client-id: ${{ secrets.TERRAFORMEXECUTOR_AZURE_CLIENT_ID }}
-          tenant-id: ${{ secrets.TERRAFORMEXECUTOR_AZURE_TENANT_ID }}
-          subscription-id: ${{ secrets.TERRAFORMEXECUTOR_AZURE_SUBSCRIPTION_ID }}
-          client-secret: ${{ secrets.TERRAFORMEXECUTOR_AZURE_CLIENT_SECRET }}
-
       - uses: hashicorp/setup-terraform@v3
         with:
           terraform_version: "1.9.8"
-
-      - name: Terraform fmt
-        run: terraform fmt -check -recursive
-
-      - name: Terraform init
-        run: terraform init -input=false
-
-      - name: Terraform validate
-        run: terraform validate
-
-      - name: Terraform plan
-        id: plan
-        run: terraform plan -no-color -input=false -out=tfplan
+      - run: terraform fmt -check -recursive
+      - run: terraform init -input=false
+      - run: terraform validate
+      - run: terraform plan -no-color -input=false -out=tfplan
         continue-on-error: true
-
       - name: Upload plan artifact
         uses: actions/upload-artifact@v4
         with:
           name: tfplan-${{ matrix.dir }}
           path: ${{ matrix.dir }}/tfplan
           retention-days: 1
-
-      - name: Comment plan result on PR
+      - name: Comment plan result
         uses: actions/github-script@v7
         if: always()
         with:
           script: |
             const outcome = '${{ steps.plan.outcome }}';
             const dir = '${{ matrix.dir }}';
-            const body = `## Terraform Plan — \`${dir}\`\n\n**Status:** ${outcome}\n\nPlan file saved as artifact: \`tfplan-${dir}\``;
+            const body = `## Terraform Plan — \`${dir}\`\n\n**Status:** ${outcome}`;
             await github.rest.issues.createComment({
               owner: context.repo.owner,
               repo: context.repo.repo,
