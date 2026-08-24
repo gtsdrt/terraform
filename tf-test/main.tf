@@ -5,9 +5,8 @@ variable "vnet_count" {
 }
 
 # 目标资源组
-resource "azurerm_resource_group" "test" {
+data "azurerm_resource_group" "test" {
   name     = "terraform-test"
-  location = "norwayeast"
 }
 
 # N 个 VNet：172.16.0.0/16 ~ 172.30.0.0/16
@@ -15,7 +14,7 @@ resource "azurerm_virtual_network" "test" {
   count               = var.vnet_count
   name                = format("test-vnet-%02d", count.index + 1)
   location            = azurerm_resource_group.test.location
-  resource_group_name = azurerm_resource_group.test.name
+  resource_group_name = data.azurerm_resource_group.test.name
   address_space       = [cidrsubnet("172.16.0.0/12", 4, count.index)]
 }
 
@@ -40,7 +39,7 @@ resource "azurerm_subnet" "test" {
 resource "azurerm_network_security_group" "test" {
   count               = var.vnet_count
   name                = format("test-nsg-%02d", count.index + 1)
-  location            = azurerm_resource_group.test.location
+  location            = data.azurerm_resource_group.test.location
   resource_group_name = azurerm_resource_group.test.name
 
   security_rule {
