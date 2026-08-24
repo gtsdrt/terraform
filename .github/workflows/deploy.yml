@@ -1,0 +1,78 @@
+name: Terraform Deploy
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'tf/**'
+      - 'tf-test/**'
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  ARM_USE_OIDC: true
+  ARM_CLIENT_ID: ${{ secrets.TERRAFORMEXECUTOR_AZURE_CLIENT_ID }}
+  ARM_SUBSCRIPTION_ID: ${{ secrets.TERRAFORMEXECUTOR_AZURE_SUBSCRIPTION_ID }}
+  ARM_TENANT_ID: ${{ secrets.TERRAFORMEXECUTOR_AZURE_TENANT_ID }}
+
+jobs:
+  # ========== Test 环境：自动部署 ==========
+  deploy-test:
+    runs-on: ubuntu-latest
+    environment: test
+    defaults:
+      run:
+        working-directory: tf-test
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.TERRAFORMEXECUTOR_AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.TERRAFORMEXECUTOR_AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.TERRAFORMEXECUTOR_AZURE_SUBSCRIPTION_ID }}
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.9.8"
+
+      - name: Terraform init
+        run: terraform init -input=false
+
+      - name: Terraform plan
+        run: terraform plan -no-color -input=false -out=tfplan
+
+      - name: Terraform apply
+        run: terraform apply -auto-approve tfplan
+
+  # ========== Production 环境：需人工审批 ==========
+  deploy-prod:
+    needs: deploy-test
+    runs-on: ubuntu-latest
+    environment: production   # ← GitHub 在这里暂停，等待审批人点击 Approve
+    defaults:
+      run:
+        working-directory: tf
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.TERRAFORMEXECUTOR_AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.TERRAFORMEXECUTOR_AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.TERRAFORMEXECUTOR_AZURE_SUBSCRIPTION_ID }}
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.9.8"
+
+      - name: Terraform init
+        run: terraform init -input=false
+
+      - name: Terraform plan
+        run: terraform plan -no-color -input=false -out=tfplan
+
+      - name: Terraform apply
+        run: terraform apply -auto-approve tfplan
