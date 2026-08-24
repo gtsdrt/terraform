@@ -48,33 +48,76 @@ jobs:
             _buildArgumentsValues_
         # ===== 在原有 build-and-deploy job 之后追加 =====
   terraform-apply:
-        needs: build-and-deploy
-        runs-on: ubuntu-latest
-        environment: production          # ← 关键：挂审批闸，有人点 Approve 才会往下走
-        concurrency: terraform-prod      # 防止两个人同时触发 apply
+    needs: build-and-deploy
+    runs-on: ubuntu-latest
+    environment: production
+    concurrency: terraform-prod
 
-        steps:
-          - name: 等容器重启就绪
-            run: sleep 60
+    steps:
+      - name: 等容器重启就绪
+        run: sleep 60
 
-          - name: Terraform plan（预览，写入日志）
-            run: |
-              curl -sf -X POST "${{ vars.TERRAFORM_EXECUTOR_URL }}/terraform/plan" \
-                -H "X-API-Key: ${{ secrets.TERRAFORM_EXECUTOR_API_KEY }}" \
-                | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('stdout','')); print(d.get('stderr',''))"
+      - name: Terraform plan（预览）
+        run: |
+          # 1. 发送请求，保存响应和状态码（去掉 -f！）
+          HTTP_CODE=$(curl -s -w "%{http_code}" \
+            -X POST "${{ vars.TERRAFORM_EXECUTOR_URL }}/terraform/plan" \
+            -H "Content-Type: application/json" \
+            -H "X-API-Key: ${{ secrets.TERRAFORM_EXECUTOR_API_KEY }}" \
+            -d '{"workspace":"default"}' \
+            -o /tmp/tf_plan.json)
 
-          - name: Terraform apply
-            run: |
-              curl -sf -X POST "${{ vars.TERRAFORM_EXECUTOR_URL }}/terraform/apply" \
-                -H "X-API-Key: ${{ secrets.TERRAFORM_EXECUTOR_API_KEY }}" \
-                | python3 -c "
-              import json, sys
-              d = json.load(sys.stdin)
-              detail = d.get('detail', d)
-              print(detail.get('stdout', ''))
-              if not detail.get('success'):
-                  print(detail.get('stderr', ''))
+          echo "HTTP Status: $HTTP_CODE"
+          echo "Raw Response:"
+          cat /tmp/tf_plan.json || echo "(empty)"
+          echo ""
+
+          # 2. 检查状态码
+          if [ "$HTTP_CODE" -ne 200 ]; then
+            echo "Error: API returned HTTP $HTTP_CODE"
+            exit 1
+          fi
+
+          # 3. 安全解析 JSON
+          python3 -c "
+          import json, sys
+          try:
+              with open('/tmp/tf_plan.json') as f:
+                  d = json.load(f)
+              print(d.get('stdout', ''))
+              if d.get('stderr'):
+                  print('STDERR:', d.get('stderr'), file=sys.stderr)
+              if not d.get('detail', {}).get('success', True):
                   sys.exit(1)
-              "
+          except json.JSONDecodeError as e:
+              print(f'Invalid JSON response: {e}', file=sys.stderr)
+              sys.exit(1)
+          "
 
+      - name: Terraform apply
+        run: |
+          HTTP_CODE=$(curl -s -w "%{http_code}" \
+            -X POST "${{ vars.TERRAFORM_EXECUTOR_URL }}/terraform/apply" \
+            -H "Content-Type: application/json" \
+            -H "X-API-Key: ${{ secrets.TERRAFORM_EXECUTOR_API_KEY }}" \
+            -d '{"workspace":"default"}' \
+            -o /tmp/tf_apply.json)
 
+          echo "HTTP Status: $HTTP_CODE"
+          cat /tmp/tf_apply.json || echo "(empty)"
+
+          if [ "$HTTP_CODE" -ne 200 ]; then
+            echo "Error: API returned HTTP $HTTP_CODE"
+            exit 1
+          fi
+
+          python3 -c "
+          import json, sys
+          with open('/tmp/tf_apply.json') as f:
+              d = json.load(f)
+          detail = d.get('detail', d)
+          print(detail.get('stdout', ''))
+          if not detail.get('success'):
+              print(detail.get('stderr', ''), file=sys.stderr)
+              sys.exit(1)
+          "
