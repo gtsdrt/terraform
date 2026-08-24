@@ -46,6 +46,35 @@ jobs:
           imageToBuild: gtsdrtterraform.azurecr.io/terraform-executor:${{ github.sha }}
           _buildArgumentsKey_: |
             _buildArgumentsValues_
+        # ===== 在原有 build-and-deploy job 之后追加 =====
+  terraform-apply:
+        needs: build-and-deploy
+        runs-on: ubuntu-latest
+        environment: production          # ← 关键：挂审批闸，有人点 Approve 才会往下走
+        concurrency: terraform-prod      # 防止两个人同时触发 apply
 
+        steps:
+          - name: 等容器重启就绪
+            run: sleep 60
+
+          - name: Terraform plan（预览，写入日志）
+            run: |
+              curl -sf -X POST "${{ vars.TERRAFORM_EXECUTOR_URL }}/terraform/plan" \
+                -H "X-API-Key: ${{ secrets.TERRAFORM_EXECUTOR_API_KEY }}" \
+                | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('stdout','')); print(d.get('stderr',''))"
+
+          - name: Terraform apply
+            run: |
+              curl -sf -X POST "${{ vars.TERRAFORM_EXECUTOR_URL }}/terraform/apply" \
+                -H "X-API-Key: ${{ secrets.TERRAFORM_EXECUTOR_API_KEY }}" \
+                | python3 -c "
+              import json, sys
+              d = json.load(sys.stdin)
+              detail = d.get('detail', d)
+              print(detail.get('stdout', ''))
+              if not detail.get('success'):
+                  print(detail.get('stderr', ''))
+                  sys.exit(1)
+              "
 
 
