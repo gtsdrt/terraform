@@ -4,11 +4,12 @@ import threading
 import httpx
 import uvicorn
 from fastapi import Query
-
+from fastapi import Body
 from fastapi import FastAPI, Header, HTTPException
 
 app = FastAPI(title="Terraform Executor")
 
+BASE_DIR = "/app"   # 加在 TF_DIR 定义附近
 TF_DIR = os.getenv("TF_DIR", "/app/tf")
 API_KEY = os.getenv("EXECUTOR_API_KEY", "")
 ALLOWED = {"init", "plan", "apply", "destroy", "output", "validate"}
@@ -54,7 +55,7 @@ def terraform_env() -> dict:
         env["MSI_SECRET"] = env.get("IDENTITY_HEADER", "")
     return env
 
-def run_terraform(command: str, extra_args: list[str]) -> dict:
+def run_terraform(command: str, extra_args: list[str], work_dir: str) -> dict:
     if command not in ALLOWED:
         raise HTTPException(status_code=400, detail=f"不支持的命令: {command}")
 
@@ -64,19 +65,19 @@ def run_terraform(command: str, extra_args: list[str]) -> dict:
 
     proc = subprocess.run(
         args,
-        cwd=TF_DIR,
+        cwd=work_dir,          # ← 原来是固定 TF_DIR
         capture_output=True,
         text=True,
-        timeout=1800,  # 30 分钟上限
+        timeout=1800,
         env=terraform_env()
     )
     return {
         "command": " ".join(args),
         "exit_code": proc.returncode,
-        "stdout": proc.stdout[-20000:],  # 截断防止响应过大
+        "stdout": proc.stdout[-20000:],
         "stderr": proc.stderr[-20000:],
         "success": proc.returncode == 0,
-    }
+}
 
 
 @app.get("/health")
@@ -85,20 +86,29 @@ def health():
 
 
 @app.post("/terraform/{command}")
-def execute(command: str, x_api_key: str = Header(default="")):
+def execute(command: str, x_api_key: str = Header(default=""), body: dict = Body(default=None)):
     if API_KEY and x_api_key != API_KEY:
         raise HTTPException(status_code=401, detail="invalid api key")
+
+    # 支持 {"dir": "tf-test"} 选择子目录，默认还是 /app/tf
+    work_dir = TF_DIR
+    if body and body.get("dir"):
+        candidate = os.path.normpath(os.path.join(BASE_DIR, body["dir"].strip("/")))
+        # 防路径穿越：必须位于 /app 下且真实存在
+        if not candidate.startswith(BASE_DIR + os.sep) or not os.path.isdir(candidate):
+            raise HTTPException(status_code=400, detail=f"invalid dir: {body['dir']}")
+        work_dir = candidate
+
     if not _lock.acquire(blocking=False):
         raise HTTPException(status_code=409, detail="已有 terraform 任务在执行中")
     try:
-        # 容器文件系统是临时的，.terraform 丢失时自动重新初始化
-        if command != "init" and not os.path.isdir(os.path.join(TF_DIR, ".terraform")):
-            init_result = run_terraform("init", ["-input=false"])
+        if command != "init" and not os.path.isdir(os.path.join(work_dir, ".terraform")):
+            init_result = run_terraform("init", ["-input=false"], work_dir)
             if not init_result["success"]:
                 raise HTTPException(status_code=500, detail={"stage": "init", **init_result})
 
         extra = ["-input=false"] if command in ("init", "plan", "apply", "destroy") else []
-        result = run_terraform(command, extra)
+        result = run_terraform(command, extra, work_dir)
         if not result["success"]:
             raise HTTPException(status_code=500, detail=result)
         return result
