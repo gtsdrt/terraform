@@ -1,4 +1,3 @@
-cat > .github/workflows/deploy.yml << 'EOF'
 name: Terraform Deploy
 
 on:
@@ -76,4 +75,3 @@ jobs:
 
       - name: Terraform apply
         run: terraform apply -auto-approve tfplan
-EOF
