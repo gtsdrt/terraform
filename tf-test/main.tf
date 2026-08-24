@@ -14,8 +14,8 @@ resource "azurerm_resource_group" "test" {
 resource "azurerm_virtual_network" "test" {
   count               = var.vnet_count
   name                = format("test-vnet-%02d", count.index + 1)
-  location            = data.azurerm_resource_group.test.location
-  resource_group_name = data.azurerm_resource_group.test.name
+  location            = azurerm_resource_group.test.location
+  resource_group_name = azurerm_resource_group.test.name
   address_space       = [cidrsubnet("172.16.0.0/12", 4, count.index)]
 }
 
@@ -31,7 +31,7 @@ locals {
 resource "azurerm_subnet" "test" {
   for_each             = local.subnet_defs
   name                 = format("subnet-%02d", each.value.sub + 1)
-  resource_group_name  = data.azurerm_resource_group.test.name
+  resource_group_name  = azurerm_resource_group.test.name
   virtual_network_name = azurerm_virtual_network.test[each.value.vnet].name
   address_prefixes     = [cidrsubnet(cidrsubnet("172.16.0.0/12", 4, each.value.vnet), 8, each.value.sub)]
 }
@@ -40,8 +40,8 @@ resource "azurerm_subnet" "test" {
 resource "azurerm_network_security_group" "test" {
   count               = var.vnet_count
   name                = format("test-nsg-%02d", count.index + 1)
-  location            = data.azurerm_resource_group.test.location
-  resource_group_name = data.azurerm_resource_group.test.name
+  location            = azurerm_resource_group.test.location
+  resource_group_name = azurerm_resource_group.test.name
 
   security_rule {
     name                       = "allow-https-inbound"
