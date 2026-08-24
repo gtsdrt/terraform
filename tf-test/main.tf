@@ -5,8 +5,9 @@ variable "vnet_count" {
 }
 
 # 目标资源组
-data "azurerm_resource_group" "test" {
+resource "azurerm_resource_group" "test" {
   name     = "terraform-test"
+  location = "norwayeast"
 }
 
 # N 个 VNet：172.16.0.0/16 ~ 172.30.0.0/16
