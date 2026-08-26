@@ -34,7 +34,7 @@ jobs:
       - run: terraform fmt -check -recursive
       - run: terraform init -input=false
       - run: terraform validate
-      - run: terraform plan -no-color -input=false -out=tfplan
+      - run: terraform plan -no-color -input=false -var-file=terraform.tfvars -out=tfplan
         continue-on-error: true
       - name: Upload plan artifact
         uses: actions/upload-artifact@v4

@@ -30,7 +30,7 @@ jobs:
         with:
           terraform_version: "1.9.8"
       - run: terraform init -input=false
-      - run: terraform plan -no-color -input=false -out=tfplan
+      - run: terraform plan -no-color -input=false -var-file=terraform.tfvars -out=tfplan      
       - run: terraform apply -auto-approve tfplan
 
   deploy-prod:
@@ -46,5 +46,5 @@ jobs:
         with:
           terraform_version: "1.9.8"
       - run: terraform init -input=false
-      - run: terraform plan -no-color -input=false -out=tfplan
+      - run: terraform plan -no-color -input=false -var-file=terraform.tfvars -out=tfplan      
       - run: terraform apply -auto-approve tfplan
