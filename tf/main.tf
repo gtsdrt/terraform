@@ -1,25 +1,35 @@
 variable "vnet_count" {
   description = "要创建的 VNet 数量"
   type        = number
-  default     = 2
 }
 
-# 目标资源组
-resource "azurerm_resource_group" "test" {
-  name     = "terraform-test"
-  location = "norwayeast"
+variable "resource_group_name" {
+  description = "资源组名称"
+  type        = string
 }
 
-# N 个 VNet：172.16.0.0/16 ~ 172.30.0.0/16
-resource "azurerm_virtual_network" "test" {
+variable "location" {
+  description = "部署区域"
+  type        = string
+  default     = "norwayeast"
+}
+
+# 资源组
+resource "azurerm_resource_group" "main" {
+  name     = var.resource_group_name
+  location = var.location
+}
+
+# VNet
+resource "azurerm_virtual_network" "main" {
   count               = var.vnet_count
-  name                = format("test-vnet-%02d", count.index + 1)
-  location            = azurerm_resource_group.test.location
-  resource_group_name = azurerm_resource_group.test.name
+  name                = format("vnet-%02d", count.index + 1)
+  location            = azurerm_resource_group.main.location
+  resource_group_name = azurerm_resource_group.main.name
   address_space       = [cidrsubnet("172.16.0.0/12", 4, count.index)]
 }
 
-# 每个 VNet 2 个子网（vnet 索引 × 子网索引 的笛卡尔积）
+# 子网
 locals {
   subnet_defs = merge([
     for i in range(var.vnet_count) : {
@@ -28,20 +38,20 @@ locals {
   ]...)
 }
 
-resource "azurerm_subnet" "test" {
+resource "azurerm_subnet" "main" {
   for_each             = local.subnet_defs
   name                 = format("subnet-%02d", each.value.sub + 1)
-  resource_group_name  = azurerm_resource_group.test.name
-  virtual_network_name = azurerm_virtual_network.test[each.value.vnet].name
+  resource_group_name  = azurerm_resource_group.main.name
+  virtual_network_name = azurerm_virtual_network.main[each.value.vnet].name
   address_prefixes     = [cidrsubnet(cidrsubnet("172.16.0.0/12", 4, each.value.vnet), 8, each.value.sub)]
 }
 
-# 每个 VNet 一个 NSG
-resource "azurerm_network_security_group" "test" {
+# NSG
+resource "azurerm_network_security_group" "main" {
   count               = var.vnet_count
-  name                = format("test-nsg-%02d", count.index + 1)
-  location            = azurerm_resource_group.test.location
-  resource_group_name = azurerm_resource_group.test.name
+  name                = format("nsg-%02d", count.index + 1)
+  location            = azurerm_resource_group.main.location
+  resource_group_name = azurerm_resource_group.main.name
 
   security_rule {
     name                       = "allow-https-inbound"
@@ -57,9 +67,9 @@ resource "azurerm_network_security_group" "test" {
 }
 
 output "deployed_vnets" {
-  value = [for v in azurerm_virtual_network.test : v.name]
+  value = [for v in azurerm_virtual_network.main : v.name]
 }
 
-output "resource_count" {
-  value = "资源组 1 + VNet ${var.vnet_count} + 子网 ${var.vnet_count * 2} + NSG ${var.vnet_count}"
+output "resource_group" {
+  value = azurerm_resource_group.main.name
 }
