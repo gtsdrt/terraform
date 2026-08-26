@@ -1,7 +1,7 @@
 variable "vnet_count" {
   description = "要创建的 VNet 数量"
   type        = number
-  default     = 9
+  default     = 2
 }
 
 # 目标资源组
