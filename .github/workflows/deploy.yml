@@ -16,7 +16,7 @@ env:
   ARM_CLIENT_SECRET: ${{ secrets.TERRAFORMEXECUTOR_AZURE_CLIENT_SECRET }}
   ARM_SUBSCRIPTION_ID: ${{ secrets.TERRAFORMEXECUTOR_AZURE_SUBSCRIPTION_ID }}
   ARM_TENANT_ID: ${{ secrets.TERRAFORMEXECUTOR_AZURE_TENANT_ID }}
-
+  ARM_USE_MSI: false 
 jobs:
   deploy-test:
     runs-on: ubuntu-latest
