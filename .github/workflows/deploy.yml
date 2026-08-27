@@ -48,3 +48,21 @@ jobs:
       - run: terraform init -input=false
       - run: terraform plan -no-color -input=false -var-file=terraform.tfvars -out=tfplan      
       - run: terraform apply -auto-approve tfplan
+
+# ========== prod 成功后自动销毁 test ==========
+
+  cleanup-test:
+    needs: deploy-prod
+    runs-on: ubuntu-latest
+    # 只有 prod 成功才执行；如果 prod 失败或跳过，保留 test 用于排查
+    if: always() && needs.deploy-prod.result == 'success'
+    defaults:
+      run:
+        working-directory: tf-test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.9.8"
+      - run: terraform init -input=false
+      - run: terraform destroy -auto-approve -var-file=terraform.tfvars
