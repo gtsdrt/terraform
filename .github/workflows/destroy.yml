@@ -50,6 +50,8 @@ jobs:
         working-directory: ${{ inputs.env }}
     steps:
       - name: 校验确认串
+        # 这一步跑在 checkout 之前，必须覆盖 job 级的 working-directory（那时 tf/ 还不存在）
+        working-directory: .
         run: |
           if [ "${{ inputs.confirm }}" != "DESTROY" ]; then
             echo "::error::confirm 必须精确填写 DESTROY（当前输入: '${{ inputs.confirm }}'）"
@@ -108,6 +110,7 @@ jobs:
 
       - name: 写入 job 摘要
         if: always()
+        working-directory: .
         run: |
           {
             echo "### Terraform Destroy"
