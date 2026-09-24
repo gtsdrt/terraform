@@ -14,70 +14,47 @@ variable "location" {
   default     = "norwayeast"
 }
 
-# 资源组
-resource "azurerm_resource_group" "main" {
-  name     = var.resource_group_name
-  location = var.location
-}
+# 网络资源都定义在 modules/network 里，两个环境共用同一份实现
+module "network" {
+  source = "../modules/network"
 
-# VNet
-resource "azurerm_virtual_network" "main" {
-  count               = var.vnet_count
-  name                = format("vnet-%02d", count.index + 1)
-  location            = azurerm_resource_group.main.location
-  resource_group_name = azurerm_resource_group.main.name
-  address_space       = [cidrsubnet("172.16.0.0/12", 4, count.index)]
-}
-
-# 子网
-locals {
-  subnet_defs = merge([
-    for i in range(var.vnet_count) : {
-      for j in range(2) : "${i}-${j}" => { vnet = i, sub = j }
-    }
-  ]...)
-}
-
-resource "azurerm_subnet" "main" {
-  for_each             = local.subnet_defs
-  name                 = format("subnet-%02d", each.value.sub + 1)
-  resource_group_name  = azurerm_resource_group.main.name
-  virtual_network_name = azurerm_virtual_network.main[each.value.vnet].name
-  address_prefixes     = [cidrsubnet(cidrsubnet("172.16.0.0/12", 4, each.value.vnet), 8, each.value.sub)]
-}
-
-# NSG
-resource "azurerm_network_security_group" "main" {
-  count               = var.vnet_count
-  name                = format("nsg-%02d", count.index + 1)
-  location            = azurerm_resource_group.main.location
-  resource_group_name = azurerm_resource_group.main.name
-
-  security_rule {
-    name                       = "allow-https-inbound"
-    priority                   = 100
-    direction                  = "Inbound"
-    access                     = "Allow"
-    protocol                   = "Tcp"
-    source_port_range          = "*"
-    destination_port_range     = "443"
-    source_address_prefix      = "*"
-    destination_address_prefix = "*"
-  }
-}
-
-# NSG 不关联到子网就不生效，所以每个 VNet 的 NSG 挂到该 VNet 下的所有子网
-resource "azurerm_subnet_network_security_group_association" "main" {
-  for_each = local.subnet_defs
-
-  subnet_id                 = azurerm_subnet.main[each.key].id
-  network_security_group_id = azurerm_network_security_group.main[each.value.vnet].id
+  vnet_count          = var.vnet_count
+  resource_group_name = var.resource_group_name
+  location            = var.location
 }
 
 output "deployed_vnets" {
-  value = [for v in azurerm_virtual_network.main : v.name]
+  value = module.network.deployed_vnets
 }
 
 output "resource_group" {
-  value = azurerm_resource_group.main.name
+  value = module.network.resource_group
+}
+
+# ── 把已有资源从根模块迁进 module ──
+#    没有这些 moved 块，Terraform 会认为旧地址的资源被删除、新地址是新建，
+#    从而把已经存在的 13 个资源 destroy 再 create。apply 成功后这些块就是空操作。
+moved {
+  from = azurerm_resource_group.main
+  to   = module.network.azurerm_resource_group.main
+}
+
+moved {
+  from = azurerm_virtual_network.main
+  to   = module.network.azurerm_virtual_network.main
+}
+
+moved {
+  from = azurerm_subnet.main
+  to   = module.network.azurerm_subnet.main
+}
+
+moved {
+  from = azurerm_network_security_group.main
+  to   = module.network.azurerm_network_security_group.main
+}
+
+moved {
+  from = azurerm_subnet_network_security_group_association.main
+  to   = module.network.azurerm_subnet_network_security_group_association.main
 }
