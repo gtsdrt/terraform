@@ -66,6 +66,14 @@ resource "azurerm_network_security_group" "main" {
   }
 }
 
+# NSG 不关联到子网就不生效，所以每个 VNet 的 NSG 挂到该 VNet 下的所有子网
+resource "azurerm_subnet_network_security_group_association" "main" {
+  for_each = local.subnet_defs
+
+  subnet_id                 = azurerm_subnet.main[each.key].id
+  network_security_group_id = azurerm_network_security_group.main[each.value.vnet].id
+}
+
 output "deployed_vnets" {
   value = [for v in azurerm_virtual_network.main : v.name]
 }
