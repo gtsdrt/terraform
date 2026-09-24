@@ -1,7 +1,0 @@
-.git
-.github
-**/.terraform
-**/*.tfstate
-**/*.tfstate.*
-**/.terraform.lock.hcl
-local.settings.json
