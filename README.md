@@ -6,8 +6,9 @@ push 到 `main` 触发 GitHub Actions，在 runner 上直接跑 Terraform，把 
 
 | 路径 | 作用 |
 |---|---|
-| `tf/` | 生产环境，state key `executor.tfstate`（名字是历史遗留，见下方备注） |
-| `tf-test/` | 测试环境，state key `terraform-test.tfstate` |
+| `modules/network/` | 网络资源的**唯一实现**（RG / VNet / 子网 / NSG / NSG 关联），两个环境共用 |
+| `tf/` | 生产环境的根模块：backend + 变量 + module 调用，state key `executor.tfstate`（名字是历史遗留，见下方备注） |
+| `tf-test/` | 测试环境的根模块，state key `terraform-test.tfstate` |
 | `.github/workflows/deploy.yml` | push main / 手动触发：plan → apply test → apply prod（需审批）→ destroy test |
 | `.github/workflows/pr-check.yml` | PR 触发：fmt / validate / plan + 贴评论，plan 失败则检查不通过 |
 
@@ -99,6 +100,65 @@ terraform plan -var-file=terraform.tfvars
 ```
 
 本地跑 plan 需要能访问 state 存储账户与 Azure management API（`az login` 后设置 `ARM_*` 环境变量，或先用 `ARM_USE_OIDC`/`ARM_USE_CLI`）。
+
+## 如何扩展（加资源 / 加环境）
+
+### 加一类资源、加变量
+
+资源写在 `modules/network/`（两个环境共用一份实现），环境目录只保留 backend、变量和 module 调用：
+
+| 你要改的东西 | 改哪里 |
+|---|---|
+| 新资源 | `modules/network/main.tf` |
+| 新的输入 | `modules/network/variables.tf` + 在 `tf/main.tf`、`tf-test/main.tf` 的 `module "network"` 块里传值 |
+| 新的输出 | `modules/network/outputs.tf`（需要暴露给外部时再加根模块的 `output`） |
+| 只属于某个环境的值 | 各自的 `terraform.tfvars` |
+| 敏感值 | ❌ 不要放 `terraform.tfvars`（已提交进 git）：用 GitHub Secrets，在 workflow 里注入 `TF_VAR_xxx` |
+
+**不需要动 `backend.tf` 和 workflow**（除非引入新 provider 或新环境）。改完本地先验证：
+
+```bash
+export ARM_USE_CLI=true                 # 复用 az login 的凭据
+export ARM_SUBSCRIPTION_ID=<订阅ID>
+export ARM_TENANT_ID=<租户ID>
+
+cd tf-test                              # 先拿 test 验证更安全
+terraform fmt -recursive
+terraform init -input=false
+terraform validate
+terraform plan -var-file=terraform.tfvars   # 确认要建/改/删什么，尤其别出现 destroy
+```
+
+然后开分支 → push → 开 PR（`pr-check` 会自动跑 plan 并贴出结果）→ 合并 → 自动部署。
+
+### 引入新的 provider（random / tls / azuread / azapi …）
+
+两个 `providers.tf` 的 `required_providers` 都要加，然后**重新生成并提交两个 lock 文件**（两个平台都要，否则本地或 CI 会报校验和不匹配）：
+
+```bash
+terraform init -upgrade
+terraform providers lock -platform=linux_amd64 -platform=darwin_arm64
+git add tf/.terraform.lock.hcl tf-test/.terraform.lock.hcl
+```
+
+### 新增一个环境（例如 staging）
+
+1. 复制 `tf-test/` 为 `staging/`，改 `backend.tf` 的 `key`（如 `staging.tfstate`）和 `terraform.tfvars`
+2. `deploy.yml` 的 `plan` job 把 `staging` 加进 matrix，并补对应的 apply / cleanup job
+3. 如果该 job 绑了 `environment: staging`，要再加一条联邦凭据，subject 形如 `repo:<owner>@<id>/<repo>@<id>:environment:staging`（`<owner>@<id>/<repo>@<id>` 用本文档第 1 节的 PREFIX 推导命令得到）
+4. `pr-check.yml` 的 matrix 也加上 `staging`
+
+### ⚠️ 四个坑
+
+1. **改资源地址 = 删了重建**。这些操作都会改变资源地址，plan 里会出现 `-/+ destroy and then create`：
+   - `count` 与 `for_each` 互改
+   - 改 `for_each` 的 key 计算方式（例如改 `local.subnet_defs` 的 `"${i}-${j}"`）
+   - 把资源在根模块与 module 之间搬动
+
+   跨模块搬动**必须写 `moved` 块**（`tf/main.tf` 末尾就是现成例子：本仓库正是靠它把 13 个已有资源零重建迁进 `modules/network` 的）。任何改动合入前，本地 `plan` 都要确认 `0 to destroy`。
+2. **变量必须两边都有值**。新变量若没有 `default`，两个 `terraform.tfvars` 都要写，否则 CI 报 `No value for required variable`。
+3. **NSG 规则用独立的 `azurerm_network_security_rule`**，内联 `security_rule` 块在 azurerm 4.x 已弃用（升级 5.x 会移除）。
+4. **`deploy.yml` 只监听 `tf/**`、`tf-test/**`、`modules/**`**。改 README 或 workflow 本身不会触发部署，需要手动 `gh workflow run deploy.yml`；以后若新增别的资源目录，记得同步加进 paths。
 
 ## Runbook：把 state key 从 `executor.tfstate` 改名
 
