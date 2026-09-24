@@ -1,0 +1,120 @@
+name: Terraform Destroy
+
+# 破坏性操作：只允许手动触发，且必须（1）填对确认串（2）通过 production 环境的审批
+on:
+  workflow_dispatch:
+    inputs:
+      env:
+        description: "要销毁哪个环境"
+        type: choice
+        options:
+          - tf
+          - tf-test
+        default: tf
+      scope:
+        description: "销毁范围（仅对 tf 生效；tf-test 只有 all）"
+        type: choice
+        options:
+          - all
+          - azlandingzone
+          - network
+        default: all
+      confirm:
+        description: "破坏性操作：请精确输入 DESTROY 才会执行"
+        type: string
+        required: true
+
+permissions:
+  contents: read
+  id-token: write
+
+# 和部署共用一把锁：避免"边部署边销毁"
+concurrency:
+  group: terraform-deploy
+  cancel-in-progress: false
+
+env:
+  ARM_CLIENT_ID: ${{ secrets.TERRAFORMEXECUTOR_AZURE_CLIENT_ID }}
+  ARM_SUBSCRIPTION_ID: ${{ secrets.TERRAFORMEXECUTOR_AZURE_SUBSCRIPTION_ID }}
+  ARM_TENANT_ID: ${{ secrets.TERRAFORMEXECUTOR_AZURE_TENANT_ID }}
+  ARM_USE_OIDC: true
+  TF_IN_AUTOMATION: true
+
+jobs:
+  destroy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: production # 破坏性操作，走审批闸门
+    defaults:
+      run:
+        working-directory: ${{ inputs.env }}
+    steps:
+      - name: 校验确认串
+        run: |
+          if [ "${{ inputs.confirm }}" != "DESTROY" ]; then
+            echo "::error::confirm 必须精确填写 DESTROY（当前输入: '${{ inputs.confirm }}'）"
+            exit 1
+          fi
+          echo "确认通过 -> env=${{ inputs.env }} scope=${{ inputs.scope }}"
+
+      - uses: actions/checkout@v4
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.9.8"
+
+      - name: Terraform init
+        run: terraform init -input=false
+
+      - name: 记录将要删除的 Key Vault 名（软删除会占用名字 7 天，销毁后必须 purge）
+        if: inputs.env == 'tf'
+        run: |
+          KV=$(terraform output -json azlandingzone 2>/dev/null | jq -r '.key_vault_name // empty' || true)
+          echo "即将销毁的 Key Vault: ${KV:-（无）}"
+          echo "KV_NAME=${KV}" >> "$GITHUB_ENV"
+
+      - name: Terraform destroy
+        run: |
+          TARGET=""
+          if [ "${{ inputs.env }}" = "tf" ]; then
+            case "${{ inputs.scope }}" in
+              azlandingzone) TARGET="-target=module.azlandingzone" ;;
+              network)       TARGET="-target=module.network" ;;
+            esac
+          fi
+          echo "执行: terraform destroy $TARGET -auto-approve"
+          terraform destroy $TARGET -lock-timeout=5m -no-color -auto-approve -var-file=terraform.tfvars
+
+      - name: 登录 az CLI（仅用于 purge 软删除的 Key Vault）
+        if: inputs.env == 'tf'
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.TERRAFORMEXECUTOR_AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.TERRAFORMEXECUTOR_AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.TERRAFORMEXECUTOR_AZURE_SUBSCRIPTION_ID }}
+
+      - name: purge 软删除的 Key Vault（否则 7 天内无法用同名重建）
+        if: inputs.env == 'tf'
+        run: |
+          if [ -z "${KV_NAME:-}" ]; then
+            echo "没有需要 purge 的 Key Vault（可能本次没有销毁 landing zone）"
+            exit 0
+          fi
+          if az keyvault purge --name "$KV_NAME" --location norwayeast --no-wait; then
+            echo "已 purge: $KV_NAME"
+          else
+            echo "::warning::purge $KV_NAME 失败（可能已被 purge 或权限不足），重建前请用 az keyvault list-deleted 确认"
+          fi
+
+      - name: 写入 job 摘要
+        if: always()
+        run: |
+          {
+            echo "### Terraform Destroy"
+            echo ""
+            echo "| 项 | 值 |"
+            echo "|---|---|"
+            echo "| env | \`${{ inputs.env }}\` |"
+            echo "| scope | \`${{ inputs.scope }}\` |"
+            echo "| Key Vault | \`${KV_NAME:-（无）}\` |"
+          } >> "$GITHUB_STEP_SUMMARY"
