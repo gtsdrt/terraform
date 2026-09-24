@@ -1,6 +1,8 @@
 # Terraform Azure 网络部署
 
-push 到 `main` 触发 GitHub Actions，在 runner 上直接跑 Terraform，把 Azure 网络资源（资源组 / VNet / 子网 / NSG）部署到两个环境。
+push 到 `main` 触发 GitHub Actions，在 runner 上直接跑 Terraform：生产环境部署网络资源 + 一套 landing zone，测试环境部署网络资源用于预检。
+
+> 📖 **完整流程说明书**（架构总览 / 资源清单 / 认证与权限 / 状态与并发 / 五条操作流程 / 坑与对策 / 演进历史）见 **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)**。
 
 ## 目录
 
