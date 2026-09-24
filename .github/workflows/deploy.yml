@@ -8,6 +8,14 @@ on:
       - 'tf-test/**'
       - 'modules/**'   # 资源实现都在 modules/ 里，改这里必须触发部署
   workflow_dispatch:
+    inputs:
+      mode:
+        description: "full = 完整部署；plan-only = 只预览计划，不 apply、不建 test 环境"
+        type: choice
+        options:
+          - full
+          - plan-only
+        default: full
 
 permissions:
   contents: read
@@ -48,7 +56,9 @@ jobs:
       - name: Terraform plan
         run: terraform plan -lock-timeout=5m -no-color -input=false -var-file=terraform.tfvars -out=tfplan
       - name: 把 plan 写入 job 摘要（审批 prod 前先看这里）
-        run: terraform show -no-color tfplan | head -c 900000 >> "$GITHUB_STEP_SUMMARY"
+        run: |
+          echo "运行模式: ${{ inputs.mode || 'full（push 触发）' }}" >> "$GITHUB_STEP_SUMMARY"
+          terraform show -no-color tfplan | head -c 900000 >> "$GITHUB_STEP_SUMMARY"
       - name: 上传 tfplan 产物
         uses: actions/upload-artifact@v4
         with:
@@ -59,6 +69,8 @@ jobs:
   # ── 2) test 环境：先真跑一遍，验证这套配置确实能 apply ──
   deploy-test:
     needs: plan
+    # push 触发时 inputs.mode 为空 → 视为 full；只有手动选 plan-only 才跳过
+    if: inputs.mode != 'plan-only'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     defaults:
@@ -81,6 +93,7 @@ jobs:
   # ── 3) prod 环境：production environment 的审批通过后才会签发 OIDC 令牌 ──
   deploy-prod:
     needs: deploy-test
+    if: inputs.mode != 'plan-only'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     environment: production
@@ -105,7 +118,7 @@ jobs:
   #     只有 prod 成功才执行；prod 失败或跳过时保留 test 用于排查。
   cleanup-test:
     needs: deploy-prod
-    if: always() && needs.deploy-prod.result == 'success'
+    if: always() && inputs.mode != 'plan-only' && needs.deploy-prod.result == 'success'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     defaults:
