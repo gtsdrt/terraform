@@ -6,6 +6,7 @@ on:
     paths:
       - 'tf/**'
       - 'tf-test/**'
+      - 'modules/**'   # 资源实现都在 modules/ 里，改这里必须触发部署
   workflow_dispatch:
 
 permissions:

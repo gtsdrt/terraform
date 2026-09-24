@@ -6,6 +6,7 @@ on:
     paths:
       - 'tf/**'
       - 'tf-test/**'
+      - 'modules/**'
 
 permissions:
   contents: read
@@ -43,7 +44,9 @@ jobs:
       - uses: hashicorp/setup-terraform@v3
         with:
           terraform_version: "1.9.8"
-      - run: terraform fmt -check -recursive
+      - name: Terraform fmt（在仓库根跑，覆盖 modules/）
+        working-directory: .
+        run: terraform fmt -check -recursive
       - run: terraform init -input=false
       - run: terraform validate
       - id: plan
