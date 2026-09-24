@@ -50,6 +50,32 @@ push 触发时没有 `mode` 参数，会被视为 `full`。
 
 > `pr-check.yml` 只能由 PR 触发，不能手动运行。
 
+### 一键销毁（`destroy.yml`）
+
+破坏性操作**只允许手动触发**，并且有三道闸门：**手填确认串 `DESTROY`** → **`production` 环境审批** → **与部署共用 concurrency 锁**（不会边部署边销毁）。
+
+```bash
+# 全部销毁（tf：演示网络 + landing zone，两个资源组都会没）
+gh workflow run destroy.yml --ref main -f env=tf -f scope=all -f confirm=DESTROY
+
+# 只删 landing zone（保留演示网络）
+gh workflow run destroy.yml --ref main -f env=tf -f scope=azlandingzone -f confirm=DESTROY
+
+# 只删演示网络（保留 landing zone）
+gh workflow run destroy.yml --ref main -f env=tf -f scope=network -f confirm=DESTROY
+```
+
+| 输入 | 说明 |
+|---|---|
+| `env` | `tf`（生产，含 landing zone）或 `tf-test`（测试，通常已被 `cleanup-test` 清空） |
+| `scope` | `all` = 整个 state；`azlandingzone` / `network` = 只删该模块（**仅 `tf` 有效**，内部用 `terraform destroy -target`） |
+| `confirm` | 必须精确是 `DESTROY`，否则第一步就失败 |
+
+销毁结束后结果会写进 job 摘要（env / scope / Key Vault 名）。
+
+> ⚠️ **Key Vault 软删除**：销毁前会记录 Key Vault 名，销毁后自动执行 `az keyvault purge` —— 否则这个名字会被占用 7 天，导致重建同名 vault 直接失败。
+> ⚠️ **Log Analytics 有软删除期**：如果销毁后立刻重建 landing zone 报工作区重名，说明它还在软删除期内（重建前先用 `az monitor log-analytics workspace list-deleted` 确认）。
+
 ## 一次性配置清单
 
 ### 1. Azure：为 GitHub Actions 配 OIDC 联邦凭据
