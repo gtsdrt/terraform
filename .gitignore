@@ -1,0 +1,22 @@
+# Terraform 本地缓存
+**/.terraform/
+**/.terraform.tfstate.lock.info
+
+# 本地残留的 state（真正的 state 在 Azure Blob 里）
+*.tfstate
+*.tfstate.*
+
+# plan 文件可能含明文敏感值，不要提交
+tfplan
+*.tfplan
+
+crash.log
+crash.*.log
+
+# ⚠️ 不要忽略 .terraform.lock.hcl：它锁定 provider 版本，
+#    必须提交，否则 CI 的 plan/apply 可能拿到不同版本导致「计划已过期」。
+
+# macOS / Python（本仓库已不再包含 Python 代码，保留以防误提交）
+.DS_Store
+__pycache__/
+*.py[cod]
