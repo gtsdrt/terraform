@@ -7,6 +7,7 @@ push 到 `main` 触发 GitHub Actions，在 runner 上直接跑 Terraform，把 
 | 路径 | 作用 |
 |---|---|
 | `modules/network/` | 网络资源的**唯一实现**（RG / VNet / 子网 / NSG / NSG 关联），两个环境共用 |
+| `modules/azlandingzone/` | 标准 landing zone（hub VNet / 多层子网 / NSG / Log Analytics / 存储 / Key Vault / 诊断），只由生产环境调用 |
 | `tf/` | 生产环境的根模块：backend + 变量 + module 调用，state key `executor.tfstate`（名字是历史遗留，见下方备注） |
 | `tf-test/` | 测试环境的根模块，state key `terraform-test.tfstate` |
 | `.github/workflows/deploy.yml` | push main / 手动触发：plan → apply test → apply prod（需审批）→ destroy test |
@@ -101,17 +102,41 @@ terraform plan -var-file=terraform.tfvars
 
 本地跑 plan 需要能访问 state 存储账户与 Azure management API（`az login` 后设置 `ARM_*` 环境变量，或先用 `ARM_USE_OIDC`/`ARM_USE_CLI`）。
 
+## Landing Zone（`modules/azlandingzone`）
+
+由**生产环境**调用（`tf/main.tf` 里的 `module "azlandingzone"`），在资源组 **`azlandingzone`** 里创建一套精简的标准 landing zone（共 26 个资源）：
+
+| 组件 | 内容 |
+|---|---|
+| hub VNet | `vnet-azlz-hub` = `10.0.0.0/16` |
+| 子网 | `GatewaySubnet` `10.0.0.0/27`、`AzureFirewallSubnet` `10.0.0.64/26`、`Management` `10.0.1.0/24`、`Shared` `10.0.2.0/24`、`Workload` `10.0.3.0/24` |
+| NSG | Management / Shared / Workload 各一个（前两个保留子网按 Azure 建议不挂 NSG），每个含 3 条基线入站规则：允许 VNet、允许 LB 健康探测、显式拒绝 Internet |
+| 集中日志 | Log Analytics 工作区 `log-azlz-<hash>`（保留 30 天） |
+| 审计落地 | 存储账户 `stazlz<hash>`（TLS 1.2、禁止公共 blob 访问） |
+| 密钥管理 | Key Vault `kv-azlz-<hash>`（RBAC 授权、网络默认拒绝、软删除 7 天、关闭清除保护） |
+| 诊断 | Key Vault 的 `AuditEvent` + `AllMetrics` 同时送 Log Analytics 和存储账户 |
+
+**关于 `<hash>`**：Key Vault 与存储账户的名字必须全局唯一，所以用 `sha256(资源组名 + name_prefix)` 的前 6 位生成稳定后缀（不会每次 plan 都变，也不需要额外的 random provider）。想用固定名字就传 `key_vault_name` / `storage_account_name`；想换地址空间就传 `vnet_address_space`。
+
+**成本**：VNet / 子网 / NSG / 规则 / 关联全部免费；Log Analytics 按摄入量、存储账户按量、Key Vault 按操作计费（正常情况下每月几十美分级别）。
+**刻意不含**：Azure Firewall（约 $900/月）、Bastion（约 $140/月）、VPN/ExpressRoute 网关、DDoS 防护计划、Private DNS/私有终结点、NSG/VNet flow logs、Policy 与管理组（后者需要租户级权限）。要加哪个说一声。
+
+**为什么只在生产环境**：资源组名固定为 `azlandingzone`，两个环境同时部署会互相抢；且 Key Vault 删除后会进入软删除状态、名字继续被占用，而 `tf-test` 是"每次 push 都建了又删"的临时环境，第二次 apply 就会因为名字被占用而失败。要在 test 里也验证的话，需要额外加一步 `az keyvault purge`。
+
+> 因此 `tf/main.tf` 与 `tf-test/main.tf` **不再逐字节相同**：test 环境只覆盖 `modules/network`，landing zone 的改动靠 PR 里的 plan 预检。
+
 ## 如何扩展（加资源 / 加环境）
 
 ### 加一类资源、加变量
 
-资源写在 `modules/network/`（两个环境共用一份实现），环境目录只保留 backend、变量和 module 调用：
+资源写在 `modules/` 下的模块里（环境目录只保留 backend、变量和 module 调用）。注意 `modules/network/` 被**两个环境**共用，`modules/azlandingzone/` **只被生产环境**调用：
 
 | 你要改的东西 | 改哪里 |
 |---|---|
-| 新资源 | `modules/network/main.tf` |
-| 新的输入 | `modules/network/variables.tf` + 在 `tf/main.tf`、`tf-test/main.tf` 的 `module "network"` 块里传值 |
-| 新的输出 | `modules/network/outputs.tf`（需要暴露给外部时再加根模块的 `output`） |
+| 网络相关新资源 | `modules/network/main.tf`（两个环境同时生效） |
+| landing zone 新资源 | `modules/azlandingzone/main.tf`（只影响生产） |
+| 新的输入 | 对应模块的 `variables.tf` + 在 `tf/main.tf`（和 `tf-test/main.tf`，若两个环境都调用）的 module 块里传值 |
+| 新的输出 | 对应模块的 `outputs.tf`（需要暴露给外部时再加根模块的 `output`） |
 | 只属于某个环境的值 | 各自的 `terraform.tfvars` |
 | 敏感值 | ❌ 不要放 `terraform.tfvars`（已提交进 git）：用 GitHub Secrets，在 workflow 里注入 `TF_VAR_xxx` |
 
@@ -223,5 +248,5 @@ gh secret set TERRAFORM_PLAN_AZURE_CLIENT_SECRET --body "$SECRET"
 - state 文件里可能包含明文敏感值（例如将来的密码类资源），该存储账户的访问范围应与其敏感度匹配。
 - CI 里传递的 `tfplan` 产物同样可能含明文敏感值（它内嵌了变量值），因此只保留 1 天；如果仓库将来变成 public，需要改成不落盘的方式（或在 plan 时用 `-json` 提取摘要）。
 - `deploy.yml` 里 apply 用的永远是这个流水线早先 plan 出来的那份产物，所以如果中途有别人改过 state，apply 会以「计划已过期」直接失败，而不是盲目覆盖。
-- `tf/main.tf` 与 `tf-test/main.tf` 目前逐字节相同。后续如果继续加资源，建议抽成 module，避免两处同步。
+- `tf/` 与 `tf-test/` 的根模块现在不再逐字节相同：两者都调用 `modules/network`，但只有 `tf/` 调用 `modules/azlandingzone`（原因见上方 Landing Zone 章节）。新增的网络资源记得让两个环境共用同一模块，避免又出现两处同步。
 - 仓库设置里的 `TERRAFORMEXECUTOR_AZURE_*` 这组名字带 executor 前缀，是历史命名，功能上仍在用（`deploy.yml` / `pr-check.yml`）。
