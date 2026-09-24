@@ -27,6 +27,29 @@ push main
 
 **审批闸门来自 GitHub 仓库设置，不在代码里**，必须配置一次（见下）。
 
+### 手动触发部署（含"只预览"模式）
+
+`deploy.yml` 支持 `workflow_dispatch`，三种触发方式：
+
+```bash
+# 网页：Actions → Terraform Deploy → Run workflow（可下拉选 mode）
+gh workflow run deploy.yml --ref main                     # full：完整部署
+gh workflow run deploy.yml --ref main -f mode=plan-only   # plan-only：只预览
+gh api -X POST repos/gtsdrt/terraform/actions/workflows/deploy.yml/dispatches \
+  -f ref=main -f 'inputs[mode]=plan-only'
+```
+
+| `mode` | 行为 |
+|---|---|
+| `full`（默认） | 与 push 完全一致：plan → 建 test 环境 → **等审批** → 建 prod → 销毁 test |
+| `plan-only` | 只跑 `plan` job（只读）：两个环境的计划写进 job 摘要并上传 `tfplan` 产物，**三个 apply / cleanup job 全部跳过**，不碰任何资源 |
+
+push 触发时没有 `mode` 参数，会被视为 `full`。
+
+⚠️ **分支要选对**：`workflow_dispatch` 可以在任意分支上跑，但 `backend.tf` 里的 state key 是固定的（`executor.tfstate` / `terraform-test.tfstate`），所以**在非 main 分支上跑 `full` 等于把那个分支的代码直接 apply 到真实的生产/测试 state 上**。想试分支就用 `-f mode=plan-only`，或者走 PR（`pr-check` 会自动 plan）。
+
+> `pr-check.yml` 只能由 PR 触发，不能手动运行。
+
 ## 一次性配置清单
 
 ### 1. Azure：为 GitHub Actions 配 OIDC 联邦凭据
