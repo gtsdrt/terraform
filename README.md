@@ -29,17 +29,26 @@ push main
 
 ### 1. Azure：为 GitHub Actions 配 OIDC 联邦凭据
 
-`deploy.yml` 用 OIDC，不再使用 `TERRAFORMEXECUTOR_AZURE_CLIENT_SECRET`。需要给对应的 App Registration / 托管身份加两条 federated credential（subject 必须完全匹配，其中 `<org>/<repo>` 用实际仓库名替换，可用 `gh repo view --json nameWithOwner -q .nameWithOwner` 查看）：
+`deploy.yml` 用 OIDC，不再使用 `TERRAFORMEXECUTOR_AZURE_CLIENT_SECRET`。给对应的 App Registration / 托管身份加两条 federated credential，subject 必须与 GitHub 实际签发的 assertion **完全一致**：
 
 | 用途 | subject |
 |---|---|
-| plan / deploy-test / cleanup-test（push 到 main，无 environment） | `repo:<org>/<repo>:ref:refs/heads/main` |
-| deploy-prod（绑了 `production` environment，审批通过后才签发令牌） | `repo:<org>/<repo>:environment:production` |
+| plan / deploy-test / cleanup-test（push 到 main，无 environment） | `<PREFIX>:ref:refs/heads/main` |
+| deploy-prod（绑了 `production` environment） | `<PREFIX>:environment:production` |
+
+> ⚠️ **`<PREFIX>` 里带不可变数字 ID**：新创建的仓库，GitHub 签发的 subject 形如
+> `repo:gtsdrt@75382482/terraform@1343500781`（owner/repo 后面带各自数字 ID），
+> 而不是 `repo:gtsdrt/terraform`。按老格式配会报
+> `AADSTS700213: No matching federated identity record found for presented assertion subject ...`
+> —— **该错误信息里会原样打印真实的 assertion，照抄它建凭据即可**。
 
 ```bash
 APP_ID=<App Registration 的对象ID(不是 clientId)>   # az ad app show --id <clientId> --query id -o tsv
-for SUBJ in "repo:<org>/<repo>:ref:refs/heads/main" \
-            "repo:<org>/<repo>:environment:production"; do
+PREFIX=$(gh api repos/<org>/<repo> --jq '"repo:\(.owner.login)@\(.owner.id)/\(.name)@\(.id)"')
+echo "$PREFIX"   # 例如 repo:gtsdrt@75382482/terraform@1343500781
+
+for SUBJ in "${PREFIX}:ref:refs/heads/main" \
+            "${PREFIX}:environment:production"; do
   az ad app federated-credential create --id "$APP_ID" --parameters "{
     \"name\": \"gh-${SUBJ##*:}\",
     \"issuer\": \"https://token.actions.githubusercontent.com\",
