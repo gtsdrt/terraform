@@ -10,17 +10,56 @@ on:
 
 permissions:
   contents: read
+  id-token: write   # 用 GitHub OIDC 换 Azure 令牌，不再依赖长期 client secret
+
+# 同一时刻只允许一条部署流水线，避免连续 push 并发 apply 争抢同一个 state（backend lease 冲突）
+concurrency:
+  group: terraform-deploy
+  cancel-in-progress: false
 
 env:
   ARM_CLIENT_ID: ${{ secrets.TERRAFORMEXECUTOR_AZURE_CLIENT_ID }}
-  ARM_CLIENT_SECRET: ${{ secrets.TERRAFORMEXECUTOR_AZURE_CLIENT_SECRET }}
   ARM_SUBSCRIPTION_ID: ${{ secrets.TERRAFORMEXECUTOR_AZURE_SUBSCRIPTION_ID }}
   ARM_TENANT_ID: ${{ secrets.TERRAFORMEXECUTOR_AZURE_TENANT_ID }}
-  ARM_USE_MSI: false 
+  ARM_USE_OIDC: true
+  TF_IN_AUTOMATION: true
+
 jobs:
-  deploy-test:
+  # ── 1) plan：只读，产出 tfplan 产物，并把计划写进 job 摘要 ──
+  #      prod 的审批人看到的就是这一份计划，批准之后才轮到 apply。
+  plan:
     runs-on: ubuntu-latest
-    environment: test
+    timeout-minutes: 20
+    strategy:
+      fail-fast: true
+      matrix:
+        dir: [tf-test, tf]
+    defaults:
+      run:
+        working-directory: ${{ matrix.dir }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.9.8"
+      - name: Terraform init
+        run: terraform init -input=false
+      - name: Terraform plan
+        run: terraform plan -lock-timeout=5m -no-color -input=false -var-file=terraform.tfvars -out=tfplan
+      - name: 把 plan 写入 job 摘要（审批 prod 前先看这里）
+        run: terraform show -no-color tfplan | head -c 900000 >> "$GITHUB_STEP_SUMMARY"
+      - name: 上传 tfplan 产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: tfplan-${{ matrix.dir }}
+          path: ${{ matrix.dir }}/tfplan
+          retention-days: 1
+
+  # ── 2) test 环境：先真跑一遍，验证这套配置确实能 apply ──
+  deploy-test:
+    needs: plan
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
     defaults:
       run:
         working-directory: tf-test
@@ -29,13 +68,20 @@ jobs:
       - uses: hashicorp/setup-terraform@v3
         with:
           terraform_version: "1.9.8"
-      - run: terraform init -input=false
-      - run: terraform plan -no-color -input=false -var-file=terraform.tfvars -out=tfplan      
-      - run: terraform apply -auto-approve tfplan
+      - uses: actions/download-artifact@v4
+        with:
+          name: tfplan-tf-test
+          path: tf-test
+      - name: Terraform init
+        run: terraform init -input=false
+      - name: Terraform apply（应用上面审批过的那份 plan）
+        run: terraform apply -lock-timeout=5m -no-color -auto-approve tfplan
 
+  # ── 3) prod 环境：production environment 的审批通过后才会签发 OIDC 令牌 ──
   deploy-prod:
     needs: deploy-test
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     environment: production
     defaults:
       run:
@@ -45,17 +91,22 @@ jobs:
       - uses: hashicorp/setup-terraform@v3
         with:
           terraform_version: "1.9.8"
-      - run: terraform init -input=false
-      - run: terraform plan -no-color -input=false -var-file=terraform.tfvars -out=tfplan      
-      - run: terraform apply -auto-approve tfplan
+      - uses: actions/download-artifact@v4
+        with:
+          name: tfplan-tf
+          path: tf
+      - name: Terraform init
+        run: terraform init -input=false
+      - name: Terraform apply（应用上面审批过的那份 plan）
+        run: terraform apply -lock-timeout=5m -no-color -auto-approve tfplan
 
-# ========== prod 成功后自动销毁 test ==========
-
+  # ── 4) prod 成功后销毁 test，避免测试资源常驻计费 ──
+  #     只有 prod 成功才执行；prod 失败或跳过时保留 test 用于排查。
   cleanup-test:
     needs: deploy-prod
-    runs-on: ubuntu-latest
-    # 只有 prod 成功才执行；如果 prod 失败或跳过，保留 test 用于排查
     if: always() && needs.deploy-prod.result == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
     defaults:
       run:
         working-directory: tf-test
@@ -64,5 +115,7 @@ jobs:
       - uses: hashicorp/setup-terraform@v3
         with:
           terraform_version: "1.9.8"
-      - run: terraform init -input=false
-      - run: terraform destroy -auto-approve -var-file=terraform.tfvars
+      - name: Terraform init
+        run: terraform init -input=false
+      - name: Terraform destroy
+        run: terraform destroy -lock-timeout=5m -no-color -auto-approve -var-file=terraform.tfvars
