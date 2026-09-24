@@ -73,8 +73,11 @@ gh workflow run destroy.yml --ref main -f env=tf -f scope=network -f confirm=DES
 
 销毁结束后结果会写进 job 摘要（env / scope / Key Vault 名）。
 
-> ⚠️ **Key Vault 软删除**：销毁前会记录 Key Vault 名，销毁后自动执行 `az keyvault purge` —— 否则这个名字会被占用 7 天，导致重建同名 vault 直接失败。
-> ⚠️ **Log Analytics 有软删除期**：如果销毁后立刻重建 landing zone 报工作区重名，说明它还在软删除期内（重建前先用 `az monitor log-analytics workspace list-deleted` 确认）。
+> ⚠️ **两个软删除坑，workflow 已自动处理**（否则"销毁 → 重建"会失败）：
+> - **Key Vault（名字占用 7 天）**：销毁前记录名字，销毁后自动 `az keyvault purge`。如果 vault 是随资源组一起被删的（已被永久删除），会识别成"无需 purge"并跳过。
+> - **Log Analytics（名字占用 14 天）**：删除后工作区进入软删除、名字不释放。按微软文档的做法，销毁后自动执行 `创建临时 RG → recover 工作区 → delete --force（永久删除，释放名字）→ 删除临时 RG`。
+>
+> 两个步骤都做了幂等判断；如果自动处理失败，日志与 job 摘要里会打印需要手动执行的完整命令（`az monitor log-analytics workspace recover` + `delete --force`）。
 
 ## 一次性配置清单
 
