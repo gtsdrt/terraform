@@ -12,15 +12,27 @@ permissions:
   pull-requests: write
 
 env:
-  ARM_CLIENT_ID: ${{ secrets.TERRAFORMEXECUTOR_AZURE_CLIENT_ID }}
-  ARM_CLIENT_SECRET: ${{ secrets.TERRAFORMEXECUTOR_AZURE_CLIENT_SECRET }}
+  # 这里刻意继续用 client secret 而不是 OIDC：pull_request 触发的 workflow 内容来自 PR 本身，
+  # 若在 PR 流程里发 OIDC 令牌，一个 fork PR 就能改 workflow 去领 Azure 令牌。
+  # secret 对 fork PR 不下发，天然失败即拒绝。deploy.yml（push 触发）已改用 OIDC。
+  # 优先使用只读的 plan 专用身份；对应 secret 还没建时自动回退到原身份（非破坏性切换）。
+  # 建好 TERRAFORM_PLAN_AZURE_* 之后即可删除 TERRAFORMEXECUTOR_AZURE_CLIENT_SECRET。
+  ARM_CLIENT_ID: ${{ secrets.TERRAFORM_PLAN_AZURE_CLIENT_ID || secrets.TERRAFORMEXECUTOR_AZURE_CLIENT_ID }}
+  ARM_CLIENT_SECRET: ${{ secrets.TERRAFORM_PLAN_AZURE_CLIENT_SECRET || secrets.TERRAFORMEXECUTOR_AZURE_CLIENT_SECRET }}
   ARM_SUBSCRIPTION_ID: ${{ secrets.TERRAFORMEXECUTOR_AZURE_SUBSCRIPTION_ID }}
   ARM_TENANT_ID: ${{ secrets.TERRAFORMEXECUTOR_AZURE_TENANT_ID }}
+  TF_IN_AUTOMATION: true
 
 jobs:
   plan:
+    # fork 来的 PR 拿不到仓库 secret，必然失败，这里直接跳过。
+    # 用 job 级 if（而不是在 on: 里做过滤）：被 if 跳过的 job 会以 skipped 结论上报，
+    # 不会像「workflow 因过滤没触发」那样让 required check 永远停在 Expected 卡住 PR。
+    if: github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     strategy:
+      fail-fast: false
       matrix:
         dir: [tf, tf-test]
     defaults:
@@ -34,7 +46,8 @@ jobs:
       - run: terraform fmt -check -recursive
       - run: terraform init -input=false
       - run: terraform validate
-      - run: terraform plan -no-color -input=false -var-file=terraform.tfvars -out=tfplan
+      - id: plan
+        run: terraform plan -lock-timeout=5m -no-color -input=false -var-file=terraform.tfvars -out=tfplan
         continue-on-error: true
       - name: Upload plan artifact
         uses: actions/upload-artifact@v4
@@ -42,6 +55,7 @@ jobs:
           name: tfplan-${{ matrix.dir }}
           path: ${{ matrix.dir }}/tfplan
           retention-days: 1
+          if-no-files-found: ignore
       - name: Comment plan result
         uses: actions/github-script@v7
         if: always()
@@ -56,3 +70,10 @@ jobs:
               issue_number: context.issue.number,
               body
             });
+      # plan 用了 continue-on-error 以便仍能贴出评论，所以必须在这里把失败重新暴露出来，
+      # 否则「plan 失败」的 PR 检查依然是绿的，形同虚设。
+      - name: 若 plan 失败则让 PR 检查失败
+        if: steps.plan.outcome == 'failure'
+        run: |
+          echo "::error::terraform plan 在 ${{ matrix.dir }} 中失败，PR 检查不通过"
+          exit 1
