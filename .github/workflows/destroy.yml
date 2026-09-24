@@ -68,12 +68,20 @@ jobs:
       - name: Terraform init
         run: terraform init -input=false
 
-      - name: 记录将要删除的 Key Vault 名（软删除会占用名字 7 天，销毁后必须 purge）
+      - name: 记录销毁后需要处理的资源名（Key Vault / Log Analytics 都有软删除）
         if: inputs.env == 'tf'
         run: |
-          KV=$(terraform output -json azlandingzone 2>/dev/null | jq -r '.key_vault_name // empty' || true)
-          echo "即将销毁的 Key Vault: ${KV:-（无）}"
-          echo "KV_NAME=${KV}" >> "$GITHUB_ENV"
+          OUT=$(terraform output -json azlandingzone 2>/dev/null || echo '{}')
+          KV=$(echo "$OUT" | jq -r '.key_vault_name // empty')
+          RG=$(echo "$OUT" | jq -r '.resource_group_name // empty')
+          # log_analytics_workspace 输出的是资源 ID，取最后一段作为工作区名
+          WS=$(echo "$OUT" | jq -r '.log_analytics_workspace // empty' | awk -F/ '{print $NF}')
+          echo "即将销毁: Key Vault=${KV:-（无）}  Log Analytics=${WS:-（无）}  RG=${RG:-（无）}"
+          {
+            echo "KV_NAME=${KV}"
+            echo "WS_NAME=${WS}"
+            echo "LZ_RG=${RG}"
+          } >> "$GITHUB_ENV"
 
       - name: Terraform destroy
         run: |
@@ -102,10 +110,45 @@ jobs:
             echo "没有需要 purge 的 Key Vault（可能本次没有销毁 landing zone）"
             exit 0
           fi
-          if az keyvault purge --name "$KV_NAME" --location norwayeast --no-wait; then
+          ERR=$(az keyvault purge --name "$KV_NAME" --location norwayeast --no-wait 2>&1) && {
             echo "已 purge: $KV_NAME"
+            exit 0
+          }
+          case "$ERR" in
+            *DeletedVaultNotFound*)
+              # 随资源组一起删除时 vault 已被永久删除，没有软删除残留
+              echo "Key Vault 没有软删除残留，无需 purge"
+              ;;
+            *)
+              echo "::warning::purge $KV_NAME 失败：$ERR"
+              ;;
+          esac
+
+      - name: 永久删除软删除的 Log Analytics 工作区（否则同名工作区 14 天内无法重建）
+        if: inputs.env == 'tf'
+        run: |
+          if [ -z "${WS_NAME:-}" ]; then
+            echo "没有需要处理的工作区"
+            exit 0
+          fi
+          # 查订阅里软删除的工作区，确认是否真的有残留
+          DELETED=$(az rest --method get \
+            --url "https://management.azure.com/subscriptions/${ARM_SUBSCRIPTION_ID}/providers/Microsoft.OperationalInsights/deletedWorkspaces?api-version=2023-09-01" \
+            --query "value[?name=='${WS_NAME}'].name" -o tsv 2>/dev/null || true)
+          if [ "$DELETED" != "$WS_NAME" ]; then
+            echo "Log Analytics 工作区没有软删除残留，无需处理"
+            exit 0
+          fi
+          # 文档明确：恢复需要原资源组存在，恢复后再 --force 永久删除即可释放名字
+          RG="${LZ_RG:-azlandingzone}"
+          if az group create --name "$RG" --location norwayeast --output none \
+            && az monitor log-analytics workspace recover --resource-group "$RG" --workspace-name "$WS_NAME" --output none \
+            && az monitor log-analytics workspace delete --resource-group "$RG" --workspace-name "$WS_NAME" --force --yes --output none \
+            && az group delete --name "$RG" --yes --output none; then
+            echo "已永久删除工作区 $WS_NAME，名字已释放"
           else
-            echo "::warning::purge $KV_NAME 失败（可能已被 purge 或权限不足），重建前请用 az keyvault list-deleted 确认"
+            echo "::warning::无法自动释放 $WS_NAME —— 重建前请手动执行："
+            echo "::warning::  az group create -n $RG -l norwayeast && az monitor log-analytics workspace recover -g $RG -n $WS_NAME && az monitor log-analytics workspace delete -g $RG -n $WS_NAME --force --yes && az group delete -n $RG --yes"
           fi
 
       - name: 写入 job 摘要
@@ -120,4 +163,5 @@ jobs:
             echo "| env | \`${{ inputs.env }}\` |"
             echo "| scope | \`${{ inputs.scope }}\` |"
             echo "| Key Vault | \`${KV_NAME:-（无）}\` |"
+            echo "| Log Analytics | \`${WS_NAME:-（无）}\` |"
           } >> "$GITHUB_STEP_SUMMARY"
