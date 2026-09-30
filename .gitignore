@@ -20,3 +20,16 @@ crash.*.log
 .DS_Store
 __pycache__/
 *.py[cod]
+
+# Local credentials and private encryption material
+.env
+.env.*
+!.env.example
+*.tfvars.local
+*.tfvars.local.json
+*.pem
+!.github/plan-keys/*.pem
+*.key
+*.p12
+*.pfx
+*.cms

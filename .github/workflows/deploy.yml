@@ -6,130 +6,203 @@ on:
     paths:
       - 'tf/**'
       - 'tf-test/**'
-      - 'modules/**'   # 资源实现都在 modules/ 里，改这里必须触发部署
+      - 'modules/**'
+      - '.github/**'
   workflow_dispatch:
     inputs:
       mode:
-        description: "full = 完整部署；plan-only = 只预览计划，不 apply、不建 test 环境"
+        description: "full = 部署；plan-only = 只发布脱敏资源变更摘要"
         type: choice
-        options:
-          - full
-          - plan-only
+        options: [full, plan-only]
         default: full
 
 permissions:
   contents: read
-  id-token: write   # 用 GitHub OIDC 换 Azure 令牌，不再依赖长期 client secret
 
-# 同一时刻只允许一条部署流水线，避免连续 push 并发 apply 争抢同一个 state（backend lease 冲突）
 concurrency:
   group: terraform-deploy
   cancel-in-progress: false
 
 env:
-  ARM_CLIENT_ID: ${{ secrets.TERRAFORMEXECUTOR_AZURE_CLIENT_ID }}
-  ARM_SUBSCRIPTION_ID: ${{ secrets.TERRAFORMEXECUTOR_AZURE_SUBSCRIPTION_ID }}
-  ARM_TENANT_ID: ${{ secrets.TERRAFORMEXECUTOR_AZURE_TENANT_ID }}
+  ARM_SUBSCRIPTION_ID: ${{ vars.TERRAFORM_AZURE_SUBSCRIPTION_ID }}
+  ARM_TENANT_ID: ${{ vars.TERRAFORM_AZURE_TENANT_ID }}
   ARM_USE_OIDC: true
+  ARM_USE_CLI: false
   TF_IN_AUTOMATION: true
 
 jobs:
-  # ── 1) plan：只读，产出 tfplan 产物，并把计划写进 job 摘要 ──
-  #      prod 的审批人看到的就是这一份计划，批准之后才轮到 apply。
   plan:
-    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
+    permissions:
+      contents: read
+      id-token: write
     strategy:
       fail-fast: true
       matrix:
         dir: [tf-test, tf]
+    env:
+      ARM_CLIENT_ID: ${{ vars.TERRAFORM_PLAN_AZURE_CLIENT_ID }}
+      PLAN_CLIENT_ID: ${{ vars.TERRAFORM_PLAN_AZURE_CLIENT_ID }}
+      TEST_CLIENT_ID: ${{ vars.TERRAFORM_TEST_AZURE_CLIENT_ID }}
+      PROD_CLIENT_ID: ${{ vars.TERRAFORM_PROD_AZURE_CLIENT_ID }}
     defaults:
       run:
         working-directory: ${{ matrix.dir }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: hashicorp/setup-terraform@v3
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Verify separate identities
+        working-directory: .
+        run: python3 .github/scripts/check_identities.py
+      - uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd # v3
         with:
           terraform_version: "1.9.8"
+          terraform_wrapper: false
       - name: Terraform init
-        run: terraform init -input=false
-      - name: Terraform plan
-        run: terraform plan -lock-timeout=5m -no-color -input=false -var-file=terraform.tfvars -out=tfplan
-      - name: 把 plan 写入 job 摘要（审批 prod 前先看这里）
+        run: terraform init -input=false -lockfile=readonly
+      - name: Terraform plan with a read-only state identity
+        # Apply is serialized and rejects stale plans. Reader cannot acquire a lease.
         run: |
-          echo "运行模式: ${{ inputs.mode || 'full（push 触发）' }}" >> "$GITHUB_STEP_SUMMARY"
-          terraform show -no-color tfplan | head -c 900000 >> "$GITHUB_STEP_SUMMARY"
-      - name: 上传 tfplan 产物
-        uses: actions/upload-artifact@v4
+          if ! terraform plan -lock=false -no-color -input=false -var-file=terraform.tfvars -out=tfplan > "$RUNNER_TEMP/plan-${{ matrix.dir }}.log" 2>&1; then
+            echo '::error::Terraform plan failed. Reproduce with an authorized local identity; raw logs are not published.'
+            exit 1
+          fi
+      - name: Publish actions only
+        run: terraform show -json tfplan | python3 ../.github/scripts/plan_summary.py >> "$GITHUB_STEP_SUMMARY"
+      - name: Encrypt the exact plan using the environment public certificate
+        if: inputs.mode != 'plan-only'
+        run: python3 ../.github/scripts/plan_artifact.py seal --input tfplan --certificate ../.github/plan-keys/${{ matrix.dir }}.pem --output tfplan.cms --environment ${{ matrix.dir }}
+      - name: Upload authenticated ciphertext only
+        if: inputs.mode != 'plan-only'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: tfplan-${{ matrix.dir }}
-          path: ${{ matrix.dir }}/tfplan
+          name: encrypted-tfplan-${{ matrix.dir }}
+          path: ${{ matrix.dir }}/tfplan.cms
           retention-days: 1
+          if-no-files-found: error
+      - name: Remove plaintext plan and logs
+        if: always()
+        run: rm -f tfplan "$RUNNER_TEMP/plan-${{ matrix.dir }}.log"
 
-  # ── 2) test 环境：先真跑一遍，验证这套配置确实能 apply ──
   deploy-test:
     needs: plan
-    # push 触发时 inputs.mode 为空 → 视为 full；只有手动选 plan-only 才跳过
-    if: inputs.mode != 'plan-only'
-    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main' && inputs.mode != 'plan-only'
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
+    environment: test
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      ARM_CLIENT_ID: ${{ vars.TERRAFORM_TEST_AZURE_CLIENT_ID }}
     defaults:
       run:
         working-directory: tf-test
     steps:
-      - uses: actions/checkout@v4
-      - uses: hashicorp/setup-terraform@v3
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd # v3
         with:
           terraform_version: "1.9.8"
-      - uses: actions/download-artifact@v4
+          terraform_wrapper: false
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
-          name: tfplan-tf-test
+          name: encrypted-tfplan-tf-test
           path: tf-test
       - name: Terraform init
-        run: terraform init -input=false
-      - name: Terraform apply（应用上面审批过的那份 plan）
-        run: terraform apply -lock-timeout=5m -no-color -auto-approve tfplan
+        run: terraform init -input=false -lockfile=readonly
+      - name: Decrypt and verify plan context after environment checks
+        env:
+          TF_PLAN_PRIVATE_KEY: ${{ secrets.TF_PLAN_PRIVATE_KEY }}
+        run: python3 ../.github/scripts/plan_artifact.py unseal --input tfplan.cms --certificate ../.github/plan-keys/tf-test.pem --output tfplan --environment tf-test
+      - name: Apply the exact plan
+        run: |
+          if ! terraform apply -input=false -lock-timeout=5m -no-color tfplan > "$RUNNER_TEMP/apply-test.log" 2>&1; then
+            echo '::error::Terraform test apply failed; raw logs are not published.'
+            exit 1
+          fi
+          echo 'Terraform test apply completed.'
+      - name: Remove plaintext plan and logs
+        if: always()
+        run: rm -f tfplan "$RUNNER_TEMP/apply-test.log"
 
-  # ── 3) prod 环境：production environment 的审批通过后才会签发 OIDC 令牌 ──
   deploy-prod:
     needs: deploy-test
-    if: inputs.mode != 'plan-only'
-    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main' && inputs.mode != 'plan-only'
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     environment: production
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      ARM_CLIENT_ID: ${{ vars.TERRAFORM_PROD_AZURE_CLIENT_ID }}
     defaults:
       run:
         working-directory: tf
     steps:
-      - uses: actions/checkout@v4
-      - uses: hashicorp/setup-terraform@v3
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd # v3
         with:
           terraform_version: "1.9.8"
-      - uses: actions/download-artifact@v4
+          terraform_wrapper: false
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
-          name: tfplan-tf
+          name: encrypted-tfplan-tf
           path: tf
       - name: Terraform init
-        run: terraform init -input=false
-      - name: Terraform apply（应用上面审批过的那份 plan）
-        run: terraform apply -lock-timeout=5m -no-color -auto-approve tfplan
+        run: terraform init -input=false -lockfile=readonly
+      - name: Decrypt and verify plan context after environment checks
+        env:
+          TF_PLAN_PRIVATE_KEY: ${{ secrets.TF_PLAN_PRIVATE_KEY }}
+        run: python3 ../.github/scripts/plan_artifact.py unseal --input tfplan.cms --certificate ../.github/plan-keys/tf.pem --output tfplan --environment tf
+      - name: Apply the exact plan
+        run: |
+          if ! terraform apply -input=false -lock-timeout=5m -no-color tfplan > "$RUNNER_TEMP/apply-prod.log" 2>&1; then
+            echo '::error::Terraform prod apply failed; raw logs are not published.'
+            exit 1
+          fi
+          echo 'Terraform prod apply completed.'
+      - name: Remove plaintext plan and logs
+        if: always()
+        run: rm -f tfplan "$RUNNER_TEMP/apply-prod.log"
 
-  # ── 4) prod 成功后销毁 test，避免测试资源常驻计费 ──
-  #     只有 prod 成功才执行；prod 失败或跳过时保留 test 用于排查。
   cleanup-test:
     needs: deploy-prod
-    if: always() && inputs.mode != 'plan-only' && needs.deploy-prod.result == 'success'
-    runs-on: ubuntu-latest
+    if: always() && github.ref == 'refs/heads/main' && inputs.mode != 'plan-only' && needs.deploy-prod.result == 'success'
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
+    environment: test
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      ARM_CLIENT_ID: ${{ vars.TERRAFORM_TEST_AZURE_CLIENT_ID }}
     defaults:
       run:
         working-directory: tf-test
     steps:
-      - uses: actions/checkout@v4
-      - uses: hashicorp/setup-terraform@v3
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd # v3
         with:
           terraform_version: "1.9.8"
+          terraform_wrapper: false
       - name: Terraform init
-        run: terraform init -input=false
-      - name: Terraform destroy
-        run: terraform destroy -lock-timeout=5m -no-color -auto-approve -var-file=terraform.tfvars
+        run: terraform init -input=false -lockfile=readonly
+      - name: Destroy test resources and retain the permission boundary resource group
+        run: |
+          if ! terraform destroy -input=false -lock-timeout=5m -no-color -auto-approve -var-file=terraform.tfvars > "$RUNNER_TEMP/cleanup-test.log" 2>&1; then
+            echo '::error::Terraform test cleanup failed; raw logs are not published.'
+            exit 1
+          fi
+      - name: Remove raw logs
+        if: always()
+        run: rm -f "$RUNNER_TEMP/cleanup-test.log"

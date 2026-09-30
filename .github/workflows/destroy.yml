@@ -1,167 +1,72 @@
 name: Terraform Destroy
 
-# 破坏性操作：只允许手动触发，且必须（1）填对确认串（2）通过 production 环境的审批
 on:
   workflow_dispatch:
     inputs:
       env:
-        description: "要销毁哪个环境"
+        description: "要销毁的环境（资源组保留）"
         type: choice
-        options:
-          - tf
-          - tf-test
+        options: [tf, tf-test]
         default: tf
       scope:
-        description: "销毁范围（仅对 tf 生效；tf-test 只有 all）"
+        description: "销毁范围；tf-test 只接受 all"
         type: choice
-        options:
-          - all
-          - azlandingzone
-          - network
+        options: [all, azlandingzone, network]
         default: all
       confirm:
-        description: "破坏性操作：请精确输入 DESTROY 才会执行"
+        description: "精确输入 DESTROY；Key Vault 和日志仅软删除，不永久清除"
         type: string
         required: true
 
 permissions:
   contents: read
-  id-token: write
 
-# 和部署共用一把锁：避免"边部署边销毁"
 concurrency:
   group: terraform-deploy
   cancel-in-progress: false
 
-env:
-  ARM_CLIENT_ID: ${{ secrets.TERRAFORMEXECUTOR_AZURE_CLIENT_ID }}
-  ARM_SUBSCRIPTION_ID: ${{ secrets.TERRAFORMEXECUTOR_AZURE_SUBSCRIPTION_ID }}
-  ARM_TENANT_ID: ${{ secrets.TERRAFORMEXECUTOR_AZURE_TENANT_ID }}
-  ARM_USE_OIDC: true
-  TF_IN_AUTOMATION: true
-
 jobs:
   destroy:
-    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
-    environment: production # 破坏性操作，走审批闸门
-    defaults:
-      run:
-        working-directory: ${{ inputs.env }}
+    environment: ${{ inputs.env == 'tf' && 'production' || 'test' }}
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      ARM_CLIENT_ID: ${{ inputs.env == 'tf' && vars.TERRAFORM_PROD_AZURE_CLIENT_ID || vars.TERRAFORM_TEST_AZURE_CLIENT_ID }}
+      ARM_SUBSCRIPTION_ID: ${{ vars.TERRAFORM_AZURE_SUBSCRIPTION_ID }}
+      ARM_TENANT_ID: ${{ vars.TERRAFORM_AZURE_TENANT_ID }}
+      ARM_USE_OIDC: true
+      ARM_USE_CLI: false
+      TF_IN_AUTOMATION: true
+      DESTROY_CONFIRM: ${{ inputs.confirm }}
+      DESTROY_ENV: ${{ inputs.env }}
+      DESTROY_SCOPE: ${{ inputs.scope }}
     steps:
-      - name: 校验确认串
-        # 这一步跑在 checkout 之前，必须覆盖 job 级的 working-directory（那时 tf/ 还不存在）
-        working-directory: .
-        run: |
-          if [ "${{ inputs.confirm }}" != "DESTROY" ]; then
-            echo "::error::confirm 必须精确填写 DESTROY（当前输入: '${{ inputs.confirm }}'）"
-            exit 1
-          fi
-          echo "确认通过 -> env=${{ inputs.env }} scope=${{ inputs.scope }}"
-
-      - uses: actions/checkout@v4
-
-      - uses: hashicorp/setup-terraform@v3
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Validate literal inputs
+        run: bash .github/scripts/check_destroy_inputs.sh
+      - uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd # v3
         with:
           terraform_version: "1.9.8"
-
+          terraform_wrapper: false
       - name: Terraform init
-        run: terraform init -input=false
-
-      - name: 记录销毁后需要处理的资源名（Key Vault / Log Analytics 都有软删除）
-        if: inputs.env == 'tf'
+        run: terraform -chdir="$DESTROY_ENV" init -input=false -lockfile=readonly
+      - name: Destroy managed resources without purging retained data
         run: |
-          OUT=$(terraform output -json azlandingzone 2>/dev/null || echo '{}')
-          KV=$(echo "$OUT" | jq -r '.key_vault_name // empty')
-          RG=$(echo "$OUT" | jq -r '.resource_group_name // empty')
-          # log_analytics_workspace 输出的是资源 ID，取最后一段作为工作区名
-          WS=$(echo "$OUT" | jq -r '.log_analytics_workspace // empty' | awk -F/ '{print $NF}')
-          echo "即将销毁: Key Vault=${KV:-（无）}  Log Analytics=${WS:-（无）}  RG=${RG:-（无）}"
-          {
-            echo "KV_NAME=${KV}"
-            echo "WS_NAME=${WS}"
-            echo "LZ_RG=${RG}"
-          } >> "$GITHUB_ENV"
-
-      - name: Terraform destroy
-        run: |
-          TARGET=""
-          if [ "${{ inputs.env }}" = "tf" ]; then
-            case "${{ inputs.scope }}" in
-              azlandingzone) TARGET="-target=module.azlandingzone" ;;
-              network)       TARGET="-target=module.network" ;;
-            esac
+          targets=()
+          if [[ "$DESTROY_ENV" == tf && "$DESTROY_SCOPE" != all ]]; then
+            targets=("-target=module.$DESTROY_SCOPE")
           fi
-          echo "执行: terraform destroy $TARGET -auto-approve"
-          terraform destroy $TARGET -lock-timeout=5m -no-color -auto-approve -var-file=terraform.tfvars
-
-      - name: 登录 az CLI（仅用于 purge 软删除的 Key Vault）
-        if: inputs.env == 'tf'
-        uses: azure/login@v2
-        with:
-          client-id: ${{ secrets.TERRAFORMEXECUTOR_AZURE_CLIENT_ID }}
-          tenant-id: ${{ secrets.TERRAFORMEXECUTOR_AZURE_TENANT_ID }}
-          subscription-id: ${{ secrets.TERRAFORMEXECUTOR_AZURE_SUBSCRIPTION_ID }}
-
-      - name: purge 软删除的 Key Vault（否则 7 天内无法用同名重建）
-        if: inputs.env == 'tf'
-        run: |
-          if [ -z "${KV_NAME:-}" ]; then
-            echo "没有需要 purge 的 Key Vault（可能本次没有销毁 landing zone）"
-            exit 0
+          if ! terraform -chdir="$DESTROY_ENV" destroy "${targets[@]}" -input=false -lock-timeout=5m -no-color -auto-approve -var-file=terraform.tfvars > "$RUNNER_TEMP/destroy.log" 2>&1; then
+            echo '::error::Terraform destroy failed; raw logs are not published.'
+            exit 1
           fi
-          ERR=$(az keyvault purge --name "$KV_NAME" --location norwayeast --no-wait 2>&1) && {
-            echo "已 purge: $KV_NAME"
-            exit 0
-          }
-          case "$ERR" in
-            *DeletedVaultNotFound*)
-              # 随资源组一起删除时 vault 已被永久删除，没有软删除残留
-              echo "Key Vault 没有软删除残留，无需 purge"
-              ;;
-            *)
-              echo "::warning::purge $KV_NAME 失败：$ERR"
-              ;;
-          esac
-
-      - name: 永久删除软删除的 Log Analytics 工作区（否则同名工作区 14 天内无法重建）
-        if: inputs.env == 'tf'
-        run: |
-          if [ -z "${WS_NAME:-}" ]; then
-            echo "没有需要处理的工作区"
-            exit 0
-          fi
-          # 查订阅里软删除的工作区，确认是否真的有残留
-          DELETED=$(az rest --method get \
-            --url "https://management.azure.com/subscriptions/${ARM_SUBSCRIPTION_ID}/providers/Microsoft.OperationalInsights/deletedWorkspaces?api-version=2023-09-01" \
-            --query "value[?name=='${WS_NAME}'].name" -o tsv 2>/dev/null || true)
-          if [ "$DELETED" != "$WS_NAME" ]; then
-            echo "Log Analytics 工作区没有软删除残留，无需处理"
-            exit 0
-          fi
-          # 文档明确：恢复需要原资源组存在，恢复后再 --force 永久删除即可释放名字
-          RG="${LZ_RG:-azlandingzone}"
-          if az group create --name "$RG" --location norwayeast --output none \
-            && az monitor log-analytics workspace recover --resource-group "$RG" --workspace-name "$WS_NAME" --output none \
-            && az monitor log-analytics workspace delete --resource-group "$RG" --workspace-name "$WS_NAME" --force --yes --output none \
-            && az group delete --name "$RG" --yes --output none; then
-            echo "已永久删除工作区 $WS_NAME，名字已释放"
-          else
-            echo "::warning::无法自动释放 $WS_NAME —— 重建前请手动执行："
-            echo "::warning::  az group create -n $RG -l norwayeast && az monitor log-analytics workspace recover -g $RG -n $WS_NAME && az monitor log-analytics workspace delete -g $RG -n $WS_NAME --force --yes && az group delete -n $RG --yes"
-          fi
-
-      - name: 写入 job 摘要
+          echo 'Destroy completed. Resource groups remain; Key Vault and Log Analytics are not purged.' >> "$GITHUB_STEP_SUMMARY"
+      - name: Remove raw logs
         if: always()
-        working-directory: .
-        run: |
-          {
-            echo "### Terraform Destroy"
-            echo ""
-            echo "| 项 | 值 |"
-            echo "|---|---|"
-            echo "| env | \`${{ inputs.env }}\` |"
-            echo "| scope | \`${{ inputs.scope }}\` |"
-            echo "| Key Vault | \`${KV_NAME:-（无）}\` |"
-            echo "| Log Analytics | \`${WS_NAME:-（无）}\` |"
-          } >> "$GITHUB_STEP_SUMMARY"
+        run: rm -f "$RUNNER_TEMP/destroy.log"
