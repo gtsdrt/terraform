@@ -1,15 +1,14 @@
 # 资源组
-resource "azurerm_resource_group" "main" {
-  name     = var.resource_group_name
-  location = var.location
+data "azurerm_resource_group" "main" {
+  name = var.resource_group_name
 }
 
 # VNet
 resource "azurerm_virtual_network" "main" {
   count               = var.vnet_count
   name                = format("vnet-%02d", count.index + 1)
-  location            = azurerm_resource_group.main.location
-  resource_group_name = azurerm_resource_group.main.name
+  location            = data.azurerm_resource_group.main.location
+  resource_group_name = data.azurerm_resource_group.main.name
   address_space       = [cidrsubnet("172.16.0.0/12", 4, count.index)]
 }
 
@@ -25,7 +24,7 @@ locals {
 resource "azurerm_subnet" "main" {
   for_each             = local.subnet_defs
   name                 = format("subnet-%02d", each.value.sub + 1)
-  resource_group_name  = azurerm_resource_group.main.name
+  resource_group_name  = data.azurerm_resource_group.main.name
   virtual_network_name = azurerm_virtual_network.main[each.value.vnet].name
   address_prefixes     = [cidrsubnet(cidrsubnet("172.16.0.0/12", 4, each.value.vnet), 8, each.value.sub)]
 }
@@ -34,8 +33,8 @@ resource "azurerm_subnet" "main" {
 resource "azurerm_network_security_group" "main" {
   count               = var.vnet_count
   name                = format("nsg-%02d", count.index + 1)
-  location            = azurerm_resource_group.main.location
-  resource_group_name = azurerm_resource_group.main.name
+  location            = data.azurerm_resource_group.main.location
+  resource_group_name = data.azurerm_resource_group.main.name
 
   security_rule {
     name                       = "allow-https-inbound"
@@ -45,7 +44,7 @@ resource "azurerm_network_security_group" "main" {
     protocol                   = "Tcp"
     source_port_range          = "*"
     destination_port_range     = "443"
-    source_address_prefix      = "*"
+    source_address_prefix      = "VirtualNetwork"
     destination_address_prefix = "*"
   }
 }

@@ -52,17 +52,15 @@ locals {
 }
 
 # ── 资源组 ──
-resource "azurerm_resource_group" "this" {
-  name     = var.resource_group_name
-  location = var.location
-  tags     = var.tags
+data "azurerm_resource_group" "this" {
+  name = var.resource_group_name
 }
 
 # ── hub VNet 与子网 ──
 resource "azurerm_virtual_network" "hub" {
   name                = "vnet-${var.name_prefix}-hub"
-  location            = azurerm_resource_group.this.location
-  resource_group_name = azurerm_resource_group.this.name
+  location            = data.azurerm_resource_group.this.location
+  resource_group_name = data.azurerm_resource_group.this.name
   address_space       = var.vnet_address_space
   tags                = var.tags
 }
@@ -71,7 +69,7 @@ resource "azurerm_subnet" "hub" {
   for_each = local.subnet_defs
 
   name                 = each.key
-  resource_group_name  = azurerm_resource_group.this.name
+  resource_group_name  = data.azurerm_resource_group.this.name
   virtual_network_name = azurerm_virtual_network.hub.name
   address_prefixes     = [each.value]
 }
@@ -81,8 +79,8 @@ resource "azurerm_network_security_group" "hub" {
   for_each = local.nsg_subnet_names
 
   name                = "nsg-${var.name_prefix}-${lower(each.key)}"
-  location            = azurerm_resource_group.this.location
-  resource_group_name = azurerm_resource_group.this.name
+  location            = data.azurerm_resource_group.this.location
+  resource_group_name = data.azurerm_resource_group.this.name
   tags                = var.tags
 }
 
@@ -90,7 +88,7 @@ resource "azurerm_network_security_rule" "baseline" {
   for_each = local.rule_matrix
 
   name                        = each.value.rule
-  resource_group_name         = azurerm_resource_group.this.name
+  resource_group_name         = data.azurerm_resource_group.this.name
   network_security_group_name = azurerm_network_security_group.hub[each.value.subnet].name
 
   priority                   = local.baseline_rules[each.value.rule].priority
@@ -114,8 +112,8 @@ resource "azurerm_subnet_network_security_group_association" "hub" {
 # ── 集中日志 ──
 resource "azurerm_log_analytics_workspace" "this" {
   name                = "log-${var.name_prefix}-${local.suffix}"
-  location            = azurerm_resource_group.this.location
-  resource_group_name = azurerm_resource_group.this.name
+  location            = data.azurerm_resource_group.this.location
+  resource_group_name = data.azurerm_resource_group.this.name
   retention_in_days   = var.log_analytics_retention_days
   tags                = var.tags
 }
@@ -123,25 +121,31 @@ resource "azurerm_log_analytics_workspace" "this" {
 # ── 诊断/审计日志落地用的存储账户 ──
 resource "azurerm_storage_account" "diagnostics" {
   name                            = local.storage_account_name
-  resource_group_name             = azurerm_resource_group.this.name
-  location                        = azurerm_resource_group.this.location
+  resource_group_name             = data.azurerm_resource_group.this.name
+  location                        = data.azurerm_resource_group.this.location
   account_tier                    = "Standard"
   account_replication_type        = "LRS"
   account_kind                    = "StorageV2"
   min_tls_version                 = "TLS1_2"
   allow_nested_items_to_be_public = false
-  tags                            = var.tags
+
+  network_rules {
+    default_action = "Deny"
+    bypass         = ["AzureServices"]
+  }
+
+  tags = var.tags
 }
 
 # ── Key Vault：RBAC 授权 + 网络默认拒绝（只放行 Azure 可信服务）──
 resource "azurerm_key_vault" "this" {
   name                       = local.key_vault_name
-  location                   = azurerm_resource_group.this.location
-  resource_group_name        = azurerm_resource_group.this.name
+  location                   = data.azurerm_resource_group.this.location
+  resource_group_name        = data.azurerm_resource_group.this.name
   tenant_id                  = data.azurerm_client_config.current.tenant_id
   sku_name                   = "standard"
   rbac_authorization_enabled = true
-  purge_protection_enabled   = false
+  purge_protection_enabled   = true
   soft_delete_retention_days = 7
   tags                       = var.tags
 

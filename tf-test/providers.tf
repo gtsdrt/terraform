@@ -1,4 +1,6 @@
 terraform {
+  required_version = "~> 1.9.0"
+
   required_providers {
     azurerm = {
       source  = "hashicorp/azurerm"
@@ -8,6 +10,17 @@ terraform {
 }
 
 provider "azurerm" {
-  features {}
+  features {
+    key_vault {
+      purge_soft_delete_on_destroy    = false
+      recover_soft_deleted_key_vaults = true
+    }
+    log_analytics_workspace {
+      permanently_delete_on_destroy = false
+    }
+    storage {
+      data_plane_available = false
+    }
+  }
   resource_provider_registrations = "none"
 }
