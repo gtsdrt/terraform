@@ -41,13 +41,24 @@ job summary 仅展示资源地址与动作。即使属性未标记 sensitive，�
 资源组在 bootstrap 中创建，是持久的权限边界，不再由 Terraform 删除。
 根模块的 removed 块覆盖历史根资源组地址和模块资源组地址，destroy=false；现有组内资源地址不变。
 VNet、子网和 NSG 实现仍由 network 模块复用。test 不验证 Landing Zone 的实际 apply。
-HTTPS 入站收窄到 VirtualNetwork；未来公网服务需要明确审查允许来源。
-诊断存储网络默认 Deny，仅绕过受信任 Azure 服务。Terraform provider 不访问受限存储的数据面。
+网络模块的 HTTPS 入站收窄到 `VirtualNetwork`；未来公网服务需要明确审查允许来源。
+Landing Zone 进一步按子网矩阵分段（`Management ← GatewaySubnet`、`Shared ← Management/Workload`、
+`Workload ← Shared`，源用具体子网 CIDR 而非整张 `VirtualNetwork`），并增加出站基线：默认拒绝 Internet，
+只放行 VNet 内部与 `AzureMonitor`。集中出站检查（FQDN 过滤 / TLS 检查）需 Azure Firewall + UDR，当前未部署。
+诊断存储网络默认 Deny、禁用 Shared Key，仅绕过受信任 Azure 服务，并带自身诊断以记录对审计日志的访问。
+Key Vault、审计存储与 Log Analytics 各有一把 `CanNotDelete` 管理锁；锁由 Terraform 管理，
+destroy 时隐式依赖保证先删锁再删资源，因此不改变销毁流程。Terraform provider 不访问受限存储的数据面。
 
 生产 Key Vault 默认拒绝网络入站、使用 RBAC、开启 purge protection；Terraform provider 也明确禁止 destroy 时 purge。
 Log Analytics 保留软删除。destroy workflow 取消恢复后永久删除以及资源组删除步骤。
-这会改变原来的“销毁后立刻同名重建”行为：需要管理员恢复软删除的 Key Vault/工作区，再导入 state 或重新 plan。
-部署身份没有订阅级 deleted-vault 权限，恢复由管理员单独完成；不要为自动恢复扩大部署身份权限。
+这会改变原来的“销毁后立刻同名重建”行为，有两条出路：
+
+- **(a) 恢复软删除资源**：管理员恢复 Key Vault / 工作区，再导入 state 或重新 plan。拿到的是**旧资源连同旧数据**。
+- **(b) 递增命名世代（推荐）**：把 `tf/terraform.tfvars` 的 `azlandingzone_name_generation` +1，
+  `kv-azlz-<hash>` / `stazlz<hash>` / `log-azlz-<hash>` 会一起换到新名字，得到一个干净环境。
+  hash 由 `sha256(资源组名 + name_prefix + name_generation)` 推导，不引入随机 provider，plan 也不会每次变化。
+
+两条路都需要管理员参与。部署身份没有订阅级 deleted-vault 权限，恢复由管理员单独完成；不要为自动恢复扩大部署身份权限。
 
 ## 迁移检查表
 

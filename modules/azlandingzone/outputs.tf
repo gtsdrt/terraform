@@ -2,6 +2,10 @@ output "resource_group_name" {
   value = data.azurerm_resource_group.this.name
 }
 
+output "name_generation" {
+  value = var.name_generation
+}
+
 output "vnet_id" {
   value = azurerm_virtual_network.hub.id
 }
