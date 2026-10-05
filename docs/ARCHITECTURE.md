@@ -44,6 +44,20 @@ VNet、子网和 NSG 实现仍由 network 模块复用。test 不验证 Landing 
 HTTPS 入站收窄到 VirtualNetwork；未来公网服务需要明确审查允许来源。
 诊断存储网络默认 Deny，仅绕过受信任 Azure 服务。Terraform provider 不访问受限存储的数据面。
 
+Landing Zone 模块另外包含 4 个**订阅级**设置（`modules/azlandingzone/detection.tf`）：
+订阅活动日志诊断（类别 `Administrative`/`Alert`/`Policy`/`Security`，按 CIS Azure Foundations 6.1.2）
+与三个 Defender for Cloud Standard 计划（`StorageAccounts`/`KeyVaults`/`Arm`）。
+
+这样做有两点必须记住：
+
+- **作用域与模块名不一致**：它们不由资源组限定，会作用于整个订阅，包括 landing zone 之外的资源。
+  Defender 计划是**计费**项；订阅活动日志每个订阅只能有一个诊断设置。
+- **生命周期耦合**：销毁 landing zone 会把它们一起移除（Defender 退回 Free、活动日志停止导出）。
+  若要安全基线独立于 landing zone 生命周期，应迁移到独立的 root module 与独立 state。
+
+Log Analytics 设了 `daily_quota_gb` 上限（默认 10 GB）以约束摄入型 DoS 与账单失控。
+代价是达到上限后当日停止摄入并丢失日志，所以这是安全与可用性的取舍，配额需按实际摄入量留足余量。
+
 生产 Key Vault 默认拒绝网络入站、使用 RBAC、开启 purge protection；Terraform provider 也明确禁止 destroy 时 purge。
 Log Analytics 保留软删除。destroy workflow 取消恢复后永久删除以及资源组删除步骤。
 这会改变原来的“销毁后立刻同名重建”行为：需要管理员恢复软删除的 Key Vault/工作区，再导入 state 或重新 plan。

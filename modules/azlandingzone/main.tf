@@ -115,6 +115,7 @@ resource "azurerm_log_analytics_workspace" "this" {
   location            = data.azurerm_resource_group.this.location
   resource_group_name = data.azurerm_resource_group.this.name
   retention_in_days   = var.log_analytics_retention_days
+  daily_quota_gb      = var.log_analytics_daily_quota_gb
   tags                = var.tags
 }
 
