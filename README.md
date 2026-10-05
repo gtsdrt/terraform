@@ -13,27 +13,9 @@ Azure 网络与 Landing Zone，使用 GitHub OIDC、生产环境审批和加密�
 
 资源组由管理员一次性创建并保留，作为 RBAC 边界；Terraform 仅管理组内资源。
 `removed` 块把历史上的资源组地址从 state 中移除，`destroy = false` 保证迁移不删除资源组。
-
-
-## 检测与可见性
-
-Landing Zone 模块包含 4 个**订阅级**设置。它们不在 landing zone 资源组内，影响范围是整个订阅：
-
-| 资源 | 作用 | 成本 |
-|---|---|---|
-| 订阅活动日志诊断设置 | 把 `Administrative` / `Alert` / `Policy` / `Security` 四类事件送入 Log Analytics | 仅摄入量 |
-| Defender for Cloud ×3 | 对 `StorageAccounts` / `KeyVaults` / `Arm` 开启 Standard 计划 | **计费**，按资源与订阅 |
-
-要点：
-
-- **订阅活动日志补上了最关键的可见性缺口**：此前 Key Vault 的审计很完整，但"谁改了角色分配、谁删了资源、谁动了网络"没有任何记录。类别按 CIS Azure Foundations 6.1.2 选取。
-  一个订阅只能有**一个** activity log 诊断设置；若订阅上已存在（手工创建或策略部署），需先移除或改用 `terraform import` 接管，否则 apply 会失败。
-- **Defender 计划是订阅级且计费的**，会影响 landing zone 之外的同类资源。用 `defender_resource_types = []` 可全部关闭。
-- 需要 `Microsoft.Security` 资源提供程序（provider 是 `resource_provider_registrations = "none"`）：`az provider register -n Microsoft.Security`。
-- **Log Analytics 设了每日摄入上限**（`log_analytics_daily_quota_gb`，默认 10 GB），防止摄入型 DoS 与账单失控。
-  ⚠️ 达到上限后当日会**停止摄入并丢日志** —— 这是安全与可用性的取舍。请按实际摄入量留足余量，不确定时调高而不是调低；`-1` 表示不限制。
-- ⚠️ **销毁 landing zone 会把这些订阅级设置一起移除**（Defender 退回 Free、活动日志停止导出）。
-  若希望安全基线独立于 landing zone 的生命周期，应把它们拆到独立 root module 与独立 state。
+网络模块创建两个 VNet、四个子网、两个 NSG 和四个关联（12 个资源）。
+生产还创建 Landing Zone 的 25 个资源，合计 37 个；资源组不计入 managed resources。
+HTTPS 入站只接受 `VirtualNetwork` 来源。
 
 ## PR 检查
 
@@ -84,21 +66,6 @@ gh workflow run destroy.yml --ref main -f env=tf-test -f scope=all -f confirm=DE
 资源组保留；Key Vault 和 Log Analytics 仅软删除，不自动 purge，也不自动删除恢复用资源组。
 生产 Key Vault 开启 purge protection，开启后不能关闭。销毁之后同名重建可能需要管理员先恢复资源；
 不要用 purge 作为日常回滚。Key Vault 使用默认拒绝的网络 ACL，RBAC 的业务访问角色需按应用另行授权。
-
-### 销毁后重建（换名，推荐）
-
-`purge protection` 不可逆，Log Analytics 的 14 天软删除也不会释放名字，而 provider 的
-`recover_soft_deleted_key_vaults = true` 只能把**旧 vault 连数据一起拿回来** —— 拿不到一个干净的环境。
-想得到全新环境，递增命名世代即可，三个全局唯一的名字会一起换掉：
-
-```hcl
-# tf/terraform.tfvars
-azlandingzone_name_generation = "v2"   # 上一次是 v1；每次销毁后 +1
-```
-
-`kv-azlz-<hash>` / `stazlz<hash>` / `log-azlz-<hash>` 的 hash 由
-`sha256(资源组名 + name_prefix + name_generation)` 推导，所以换世代不引入任何随机 provider，
-plan 也不会每次变化。旧的软删除资源留在 Azure 中，按需由管理员自行恢复或清理。
 
 ## 一次性安全迁移
 
