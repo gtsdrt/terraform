@@ -14,12 +14,6 @@ variable "location" {
   default     = "norwayeast"
 }
 
-variable "azlandingzone_name_generation" {
-  description = "landing zone 命名世代：销毁后重建前 +1，避开 Key Vault(purge protection) 与 Log Analytics 软删除占用的名字"
-  type        = string
-  default     = "v1"
-}
-
 # 网络资源都定义在 modules/network 里，两个环境共用同一份实现
 module "network" {
   source = "../modules/network"
@@ -47,10 +41,6 @@ module "azlandingzone" {
   location            = var.location
   name_prefix         = "azlz"
 
-  # 销毁后重建前 +1：Key Vault 开了 purge protection（不可逆）、Log Analytics 有 14 天软删除，
-  # 同名重建并不可靠，换名才是确定可行的手段。见 README「销毁后如何重建」。
-  name_generation = var.azlandingzone_name_generation
-
   tags = {
     managed_by = "terraform"
     env        = "prod"
@@ -60,7 +50,6 @@ module "azlandingzone" {
 output "azlandingzone" {
   value = {
     resource_group_name     = module.azlandingzone.resource_group_name
-    name_generation         = module.azlandingzone.name_generation
     vnet_name               = module.azlandingzone.vnet_name
     subnet_ids              = module.azlandingzone.subnet_ids
     log_analytics_workspace = module.azlandingzone.log_analytics_workspace_id
