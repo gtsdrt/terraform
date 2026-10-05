@@ -21,6 +21,25 @@ variable "name_prefix" {
   }
 }
 
+variable "name_generation" {
+  description = <<-EOT
+    命名世代，参与 Key Vault / 存储账户 / Log Analytics 的名字 hash。
+    销毁 landing zone 后、重建之前把它 +1（v1 → v2 → v3…），即可避开软删除期间被占用的名字。
+
+    为什么需要它：Key Vault 已开启 purge protection（不可逆），无法 purge；
+    Log Analytics 有 14 天软删除且 provider 不会自动恢复，同名重建会直接失败。
+    provider 的 recover_soft_deleted_key_vaults = true 只能把**旧 vault 连数据一起拿回来**，
+    拿不到一个干净的新 vault。换名是唯一确定可行、且能得到干净环境的手段。
+  EOT
+  type        = string
+  default     = "v1"
+
+  validation {
+    condition     = can(regex("^[a-z0-9]{1,8}$", var.name_generation))
+    error_message = "name_generation 只能包含小写字母和数字，长度 1-8。"
+  }
+}
+
 variable "vnet_address_space" {
   description = "hub VNet 的地址空间"
   type        = list(string)

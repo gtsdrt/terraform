@@ -13,10 +13,7 @@ Azure 网络与 Landing Zone，使用 GitHub OIDC、生产环境审批和加密�
 
 资源组由管理员一次性创建并保留，作为 RBAC 边界；Terraform 仅管理组内资源。
 `removed` 块把历史上的资源组地址从 state 中移除，`destroy = false` 保证迁移不删除资源组。
-网络模块创建两个 VNet、四个子网、两个 NSG 和四个关联（12 个资源）。
-生产还创建 Landing Zone 模块的 29 个资源，合计 41 个；资源组不计入 managed resources。
-其中 4 个是**订阅级**设置（1 个订阅活动日志诊断 + 3 个 Defender 计划），见「检测与可见性」。
-HTTPS 入站只接受 `VirtualNetwork` 来源。
+
 
 ## 检测与可见性
 
@@ -87,6 +84,21 @@ gh workflow run destroy.yml --ref main -f env=tf-test -f scope=all -f confirm=DE
 资源组保留；Key Vault 和 Log Analytics 仅软删除，不自动 purge，也不自动删除恢复用资源组。
 生产 Key Vault 开启 purge protection，开启后不能关闭。销毁之后同名重建可能需要管理员先恢复资源；
 不要用 purge 作为日常回滚。Key Vault 使用默认拒绝的网络 ACL，RBAC 的业务访问角色需按应用另行授权。
+
+### 销毁后重建（换名，推荐）
+
+`purge protection` 不可逆，Log Analytics 的 14 天软删除也不会释放名字，而 provider 的
+`recover_soft_deleted_key_vaults = true` 只能把**旧 vault 连数据一起拿回来** —— 拿不到一个干净的环境。
+想得到全新环境，递增命名世代即可，三个全局唯一的名字会一起换掉：
+
+```hcl
+# tf/terraform.tfvars
+azlandingzone_name_generation = "v2"   # 上一次是 v1；每次销毁后 +1
+```
+
+`kv-azlz-<hash>` / `stazlz<hash>` / `log-azlz-<hash>` 的 hash 由
+`sha256(资源组名 + name_prefix + name_generation)` 推导，所以换世代不引入任何随机 provider，
+plan 也不会每次变化。旧的软删除资源留在 Azure 中，按需由管理员自行恢复或清理。
 
 ## 一次性安全迁移
 
