@@ -13,17 +13,27 @@ Azure 网络与 Landing Zone，使用 GitHub OIDC、生产环境审批和加密�
 
 资源组由管理员一次性创建并保留，作为 RBAC 边界；Terraform 仅管理组内资源。
 `removed` 块把历史上的资源组地址从 state 中移除，`destroy = false` 保证迁移不删除资源组。
-网络模块创建两个 VNet、四个子网、两个 NSG、两条独立的 HTTPS 入站规则和四个关联（14 个资源）。
-生产还创建 Landing Zone 的 39 个资源，合计 53 个；资源组不计入 managed resources。
-网络模块的 HTTPS 入站只接受 `VirtualNetwork` 来源。
 
-Landing Zone 的三层网络策略：
 
-- **入站按子网矩阵分段**：`Management ← GatewaySubnet`、`Shared ← Management/Workload`、`Workload ← Shared`，源使用具体子网 CIDR 而非整张 `VirtualNetwork`，避免同 VNet 内横向无隔离。
-- **出站默认拒绝 Internet**，只放行 VNet 内部与 `AzureMonitor`。没有这一层，Azure 默认规则 `AllowInternetOutBound(65000)` 会直接生效，等于没有出站管控。集中出站检查（FQDN 过滤）仍需 Azure Firewall + UDR，当前未部署。
-- 规则使用独立的 `azurerm_network_security_rule`（内联 `security_rule` 块在 azurerm 4.x 已弃用、5.x 会移除）。
+## 检测与可见性
 
-其余加固：审计存储关闭 Shared Key（只能走 Entra ID 授权）并带自身诊断；Key Vault / 审计存储 / Log Analytics 各有一把 `CanNotDelete` 管理锁，防止误删或凭据失陷后被清空。锁由 Terraform 管理，destroy 时会先删锁再删资源。
+Landing Zone 模块包含 4 个**订阅级**设置。它们不在 landing zone 资源组内，影响范围是整个订阅：
+
+| 资源 | 作用 | 成本 |
+|---|---|---|
+| 订阅活动日志诊断设置 | 把 `Administrative` / `Alert` / `Policy` / `Security` 四类事件送入 Log Analytics | 仅摄入量 |
+| Defender for Cloud ×3 | 对 `StorageAccounts` / `KeyVaults` / `Arm` 开启 Standard 计划 | **计费**，按资源与订阅 |
+
+要点：
+
+- **订阅活动日志补上了最关键的可见性缺口**：此前 Key Vault 的审计很完整，但"谁改了角色分配、谁删了资源、谁动了网络"没有任何记录。类别按 CIS Azure Foundations 6.1.2 选取。
+  一个订阅只能有**一个** activity log 诊断设置；若订阅上已存在（手工创建或策略部署），需先移除或改用 `terraform import` 接管，否则 apply 会失败。
+- **Defender 计划是订阅级且计费的**，会影响 landing zone 之外的同类资源。用 `defender_resource_types = []` 可全部关闭。
+- 需要 `Microsoft.Security` 资源提供程序（provider 是 `resource_provider_registrations = "none"`）：`az provider register -n Microsoft.Security`。
+- **Log Analytics 设了每日摄入上限**（`log_analytics_daily_quota_gb`，默认 10 GB），防止摄入型 DoS 与账单失控。
+  ⚠️ 达到上限后当日会**停止摄入并丢日志** —— 这是安全与可用性的取舍。请按实际摄入量留足余量，不确定时调高而不是调低；`-1` 表示不限制。
+- ⚠️ **销毁 landing zone 会把这些订阅级设置一起移除**（Defender 退回 Free、活动日志停止导出）。
+  若希望安全基线独立于 landing zone 的生命周期，应把它们拆到独立 root module 与独立 state。
 
 ## PR 检查
 
