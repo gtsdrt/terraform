@@ -7,6 +7,7 @@ import tempfile
 import unittest
 import io
 import sys
+import textwrap
 from contextlib import redirect_stdout
 from unittest.mock import patch
 
@@ -176,6 +177,36 @@ class SecurityTests(unittest.TestCase):
                 workflows.lint_source(invalid)
         unsupported = valid.replace("queue: max", "queue: unsupported")
         self.assertIn("queue: unsupported", workflows.lint_source(unsupported))
+
+    def test_recovery_step_handles_pagination_cli_errors_and_manual_runs(self):
+        workflow = (ROOT / ".github/workflows/cleanup-test.yml").read_text()
+        script = textwrap.dedent(workflow.split("        run: |\n", 1)[1].split("      - uses:", 1)[0])
+        mock = Path(self.case.name) / "gh"
+        mock.write_text("#!/bin/sh\nfor arg in \"$@\"; do\n  case \"$arg\" in --jq|--template) exit 2 ;; esac\ndone\nprintf '%s\\n' \"$MOCK_GH_PAGES\"\nexit \"${MOCK_GH_STATUS:-0}\"\n")
+        mock.chmod(0o755)
+        cases = [
+            ("workflow_run", [{"jobs": []}, {"jobs": [{"name": "deploy-test", "conclusion": "success"}]}], 0, "true"),
+            ("workflow_run", [{"jobs": [{"name": "deploy-test", "conclusion": "cancelled"}]}], 0, "true"),
+            ("workflow_run", [{"jobs": [{"name": "deploy-test", "conclusion": "skipped"}]}], 0, "false"),
+            ("workflow_run", [{"jobs": []}], 1, None),
+            ("schedule", [], 1, "true"),
+            ("workflow_dispatch", [], 1, "true"),
+        ]
+        for event, pages, status, needed in cases:
+            with self.subTest(event=event, pages=pages, status=status):
+                output = Path(self.case.name) / "github-output"
+                output.write_text("")
+                env = {**os.environ, "PATH": f"{self.case.name}:{os.environ['PATH']}",
+                       "GITHUB_EVENT_NAME": event, "GITHUB_REPOSITORY": "test/terraform",
+                       "SOURCE_RUN_ID": "42", "GITHUB_OUTPUT": str(output),
+                       "MOCK_GH_PAGES": json.dumps(pages), "MOCK_GH_STATUS": str(status)}
+                result = subprocess.run(["bash", "--noprofile", "--norc", "-e", "-o", "pipefail", "-c", script], env=env, capture_output=True, text=True)
+                if needed is None:
+                    self.assertNotEqual(result.returncode, 0)
+                    self.assertEqual(output.read_text(), "")
+                else:
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    self.assertEqual(output.read_text(), f"needed={needed}\n")
 
     def test_summary_omits_secrets_even_if_not_marked_sensitive(self):
         document = {"variables": {"password": {"value": "secret-marker"}},

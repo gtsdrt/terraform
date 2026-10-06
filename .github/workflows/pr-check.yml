@@ -26,7 +26,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        dir: [tf, tf-test]
+        dir: [tf, tf-test, tf-foundation]
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
@@ -55,6 +55,16 @@ jobs:
           persist-credentials: false
       - name: Test encryption, replay protection, summaries and input handling
         run: python3 -m unittest discover -s tests -v
+      - uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd # v3
+        with:
+          terraform_version: "1.9.8"
+          terraform_wrapper: false
+      - name: Test foundation RBAC and fresh resource names without Azure access
+        run: |
+          terraform -chdir=tf-foundation init -backend=false -input=false -lockfile=readonly
+          terraform -chdir=tf-foundation test
+          terraform -chdir=tf init -backend=false -input=false -lockfile=readonly
+          terraform -chdir=tf test
       - name: Validate workflow syntax and job dependencies
         run: |
           curl -fsSL --retry 3 https://github.com/rhysd/actionlint/releases/download/v1.7.12/actionlint_1.7.12_linux_amd64.tar.gz -o "$RUNNER_TEMP/actionlint.tar.gz"

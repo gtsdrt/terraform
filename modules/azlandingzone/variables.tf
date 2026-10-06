@@ -16,8 +16,18 @@ variable "name_prefix" {
   default     = "azlz"
 
   validation {
-    condition     = can(regex("^[a-z0-9-]{2,8}$", var.name_prefix))
-    error_message = "name_prefix 只能包含小写字母、数字和连字符，长度 2-8。"
+    condition     = length(var.name_prefix) >= 2 && length(var.name_prefix) <= 8 && can(regex("^[a-z0-9]+(-[a-z0-9]+)*$", var.name_prefix))
+    error_message = "name_prefix 长度 2-8，只含小写字母、数字和单个分隔连字符，不能以连字符开头或结尾。"
+  }
+}
+
+variable "deployment_generation" {
+  description = "重建代号；与新的 state key 一起使用，避免复用旧软删除资源名称"
+  type        = string
+  default     = "v2"
+  validation {
+    condition     = can(regex("^[a-z0-9]{1,12}$", var.deployment_generation))
+    error_message = "deployment_generation 必须是 1-12 位小写字母或数字。"
   }
 }
 

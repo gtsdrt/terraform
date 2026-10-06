@@ -34,7 +34,7 @@ output "resource_group" {
 # ── 把已有资源从根模块迁进 module ──
 #    没有这些 moved 块，Terraform 会认为旧地址的资源被删除、新地址是新建，
 #    从而把已经存在的 13 个资源 destroy 再 create。apply 成功后这些块就是空操作。
-# Resource groups are bootstrapped once and retained as RBAC boundaries.
+# Resource groups are managed by tf-foundation and retained as RBAC boundaries.
 # Forget historical managed addresses without deleting the groups in Azure.
 removed {
   from = azurerm_resource_group.main

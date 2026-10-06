@@ -27,6 +27,7 @@ __pycache__/
 !.env.example
 *.tfvars.local
 *.tfvars.local.json
+tf-foundation/imports.local.tf
 *.pem
 !.github/plan-keys/*.pem
 *.key

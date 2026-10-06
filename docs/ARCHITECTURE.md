@@ -1,71 +1,74 @@
 # 安全架构与运维边界
 
+首次上线看 [FRESH_START](FRESH_START.md)；日常部署、审批和故障处理看 [DEPLOYMENT_GUIDE](DEPLOYMENT_GUIDE.md)。本文描述 v2 foundation 与业务层的授权边界。
+
+## Terraform 管理层
+
+`tf-foundation/` 在独立的 foundation state 中创建三个 v2 资源组、自定义角色及角色分配。执行者为具有创建资源组、角色定义和 RBAC 授权能力的 Azure 管理员，例如订阅 Owner；此身份不进入日常 GitHub 部署 job。
+
+三个组是 `terraform-prod-v2`、`terraform-test-v2`、`azlandingzone-v2`。组设置 `prevent_destroy`，工作流的 test 清理及 prod 销毁不操作 foundation state。业务模块通过 data source 使用组，因此仅执行业务 Terraform 无法在缺少 foundation 时创建组。
+
+`prevent_destroy` 只保护 Terraform 管理操作，不阻止 Azure 管理员在 Portal 删除资源组。删除组会破坏业务资源及其组范围授权；需要管理员重新核对 foundation，而不能仅给另一个应用增加 Contributor。
+
 ## 认证和授权
 
-每个 GitHub OIDC subject 绑定独立 Azure service principal，而非同一身份的多个 federated credentials。
+三个 GitHub OIDC subject 绑定独立 service principal，当前仓库 owner/repository 的 immutable 数字 ID 构成 subject 前缀。
 
-| 身份 | OIDC subject 后缀 | Azure 管理权限 | state 数据权限 |
+| 身份 | OIDC subject 后缀 | 管理权限 | state 数据权限 |
 |---|---|---|---|
-| plan | `ref:refs/heads/main` | 三个受管资源组只读，另含 Storage listKeys 与 Log Analytics sharedKeys 的读取 | 两个隔离容器 Blob Data Reader |
-| test | `environment:test` | 仅 terraform-test 资源组 Contributor | 仅 tfstate-test 容器 Blob Data Contributor |
-| prod | `environment:production` | 仅 terraform-prod、azlandingzone 资源组 Contributor | 仅 tfstate-prod 容器 Blob Data Contributor |
+| plan | `ref:refs/heads/main` | 三个 v2 组的只读角色，包含刷新诊断资源所需的 Storage listKeys/Log Analytics sharedKeys | prod/test 容器 Blob Data Reader |
+| test | `environment:test` | 仅 test-v2 组 Contributor | 仅 test 容器 Blob Data Contributor |
+| prod | `environment:production` | 仅两个生产 v2 组 Contributor；订阅范围附加 deleted-vault 元数据读取 | 仅 prod 容器 Blob Data Contributor |
+| 本地管理员 | Azure CLI 登录 | foundation 与初始化所需管理权限 | foundation 容器 Blob Data Contributor |
 
-subject 的完整前缀由 GitHub owner/repository 不可变数字 ID 推导，bootstrap 脚本读取实际仓库数据生成。
-无订阅级 Contributor，无长期 Azure Client Secret。Key Vault 业务 secret 的数据面角色不由该部署身份获得。
-plan 因 Terraform 刷新计算属性需要读取诊断资源密钥，因此它能读取敏感数据；“只读”不代表数据不敏感。
-plan 对管理面不能写入，对 state 数据面不能写入，也不能通过账户 listKeys 获得整个 state 账户访问权。
+foundation 自定义 plan 角色的 assignable scope 是目标订阅，但角色分配 scope 只落在三个业务组，不等于授予订阅级密钥读取。它不获得 backend 资源组的 listKeys 权限，不获得管理面写入或业务 secret 数据角色。
 
-production 的环境审批限制生产身份和私钥获取；main 分支保护限制谁能修改受信任的工作流。
-这两个边界必须同时启用。test 环境也限制为 main。
-PR 检查完全离线于 Azure，不下发 secrets，不签发 OIDC；fork PR 仍运行格式、校验和密钥扫描。
+AzureRM 创建 Key Vault 时查询同名 deleted vault，生产因此得到 `Microsoft.KeyVault/locations/deletedVaults/read` 和 `Microsoft.KeyVault/locations/operationResults/read`；不获得 purge/recover 写入。新资源名称避开旧软删除名称，provider 的 Key Vault 自动恢复关闭。
 
-## state 与计划
+plan 因刷新计算属性会读取诊断密钥，仍属于敏感数据身份。production 环境审批保护生产身份及私钥，main Ruleset 保护工作流代码，二者必须同时保持。当前 production 由 `atea-shuangliang` 审批、禁止自行审批和管理员绕过，两个环境仅允许 main。
 
-原 tfstate 容器保留为迁移备份，新 tfstate-prod 和 tfstate-test 都禁止匿名访问。
-backend 显式使用 Microsoft Entra ID；state 存储账户禁用 Shared Key。
-apply 的两个身份分别只能操作一个容器，因此测试身份不能修改生产 state。
-可执行计划在共享写入队列内计算且不申请 lease，apply 获取 lease 并拒绝 serial 已变化的旧计划。
-只读 plan-only 使用独立队列，可能与写入并发，因此摘要只供参考。写入队列使用 queue:max，最多保留 100 个等待请求。
-人工操作也必须避免与 Actions 写入并发。
+## 从零准备与 state
 
-公开 plan artifact 仅包含 CMS AuthEnvelopedData，AES-256-GCM 提供加密和完整性验证，RSA 封装会话密钥。
-内部文档绑定 repository、commit SHA、GitHub run ID、Terraform 环境、deploy/destroy 目的和销毁范围。
-版本 2 文档同时绑定生成/到期时间，24 小时后拒绝 apply；密文保留 3 天。解密、上下文、时效和摘要验证全部通过后才创建 mode 0600 的 plan 文件。
-两个环境使用不同私钥，生产私钥仅存在 production environment 的 secret。
-公钥证书有效期五年；轮换时暂停运行，生成新的证书与环境私钥，同时提交新证书，并丢弃旧运行的计划。
-保护环境的访问控制及主分支审查同样保护私钥；获准在生产 job 中运行恶意代码仍能窃取它。
+backend 资源组 `Terraform`、存储账户 `gtsdrtterraform2` 是现有管理基础设施，不放进业务 state。`prepare_fresh_start.py` 在核对订阅、租户、三个 Client ID 与 Object ID 后生成排除在 Git 外的本地输入。如果 v2 组和对应 Contributor 授权已存在，还生成本地 import 块，保留现有组区域；仅导入确定匹配的组、身份、角色和 scope，普通 Reader 或其他身份的授权保持原状。import 在管理员审查后的 foundation plan/apply 中执行。
 
-job summary 展示资源地址、动作及有限的安全设置允许列表；允许列表接受固定枚举、布尔值和有界数字。
-具体 IP、任意字符串、ID、变量、输出、标签及 sensitive/unknown 值仍隐藏。嵌套 NSG 规则和网络 ACL 也检查敏感标记。
-原始 Terraform 输出不进入公开 Actions 日志；统一执行器仅输出固定错误类别，并删除临时日志，always 步骤兜底。
-销毁分为 plan 与 apply 两个 job：只读身份先生成摘要与密文，再由生产审批释放生产身份与私钥，apply 仅接受该计划。
-测试部署后立即清理，测试和清理均成功才进入生产审批。取消后的恢复和每 6 小时清理只操作 test state，
-从 main checkout，拒绝其他仓库触发事件，并参与共享写入队列；审批等待仍会阻塞其他写入。
+管理员使用初始化脚本建立/保留私有容器并初始化缺失的 v2 文件：
 
-## 资源生命周期
+| 层 | 文件 |
+|---|---|
+| foundation | `tfstate-foundation/foundation-v2.tfstate` |
+| prod | `tfstate-prod/executor-v2.tfstate` |
+| test | `tfstate-test/terraform-test-v2.tfstate` |
 
-资源组在 bootstrap 中创建，是持久的权限边界，不再由 Terraform 删除。
-根模块的 removed 块覆盖历史根资源组地址和模块资源组地址，destroy=false；现有组内资源地址不变。
-VNet、子网和 NSG 实现仍由 network 模块复用。test 不验证 Landing Zone 的实际 apply。
-HTTPS 入站收窄到 VirtualNetwork；未来公网服务需要明确审查允许来源。
-诊断存储网络默认 Deny，仅绕过受信任 Azure 服务。Terraform provider 不访问受限存储的数据面。
+脚本只允许这三个新 key，先检查存在性，上传禁止覆盖；已有 v2 state 原样保留。旧 prod/test 文件和历史 tfstate 容器不下载、不复制、不覆盖。
 
-生产 Key Vault 默认拒绝网络入站、使用 RBAC、开启 purge protection；Terraform provider 也明确禁止 destroy 时 purge。
-Log Analytics 保留软删除。destroy workflow 不永久 purge，也不删除资源组。
-诊断存储账户仍属于 Landing Zone 销毁范围，其归档日志不会得到上述软删除保护；摘要明确提示此风险。
-这会改变原来的“销毁后立刻同名重建”行为：需要管理员恢复软删除的 Key Vault/工作区，再导入 state 或重新 plan。
-部署身份没有订阅级 deleted-vault 权限，恢复由管理员单独完成；不要为自动恢复扩大部署身份权限。
+初始化需临时的管理员账户级 blob 数据访问。只有脚本新建的临时角色会在 finally 中撤销，已有角色保留；管理员获得 foundation 容器范围的持久数据角色，工作流身份不授予 foundation 容器的数据权限。异常或进程被强制终止时仍应人工复核临时角色，避免遗留。
 
-## 迁移检查表
+backend 使用 Entra ID，现有 state 账户的 Shared Key/匿名 Blob 访问保持禁用。prod/test 虽使用同一账户，但分属不同数据容器；本地切换新 backend 用 init -reconfigure，不迁移旧 state 到 v2。
 
-1. 确认没有部署或销毁运行，暂停旧 deploy/destroy workflow。
-2. 用 bootstrap prepare 创建 OIDC 身份、资源组、容器和环境加密密钥。
-3. 逐字节复制两个历史 state，保留 lineage/serial；两个目标文件的 SHA-256 必须与源相同。
-4. 提交代码和公钥证书，跑 fmt、两套 validate、加密安全测试、Gitleaks 和 actionlint。
-5. 合入后只跑 plan-only，用新的只读 OIDC 身份验证 backend 和资源读取。此步骤不创建资源。
-6. bootstrap retire 撤销旧身份角色与 client secrets，禁用 state 共享密钥及匿名 Blob 访问。
-7. 启用 main PR/检查/批准保护与 production 审批保护；恢复 deploy/destroy workflow。
-8. 本地使用新 backend 需 init -reconfigure。将来 full 部署仍先 test，再等待 production 审批。
+## 计划、审批与日志
 
-如果新身份验证失败，应保持旧写入 workflow 暂停，修复新身份授权；不要回退到订阅级 Contributor 或公开原始 plan。
-Azure 角色授权/撤销可能需要数分钟传播。更改存储认证前，确认该 state 账户没有其他使用 Shared Key 的应用。
+公开 artifact 仅包含 CMS AuthEnvelopedData 密文；AES-256-GCM 验证内容完整性，RSA 封装会话密钥。计划文档绑定仓库、提交、run ID、环境、deploy/destroy 目的、范围及 24 小时有效期，密文保留 3 天。
+
+私钥仅存于各 environment 的 `TF_PLAN_PRIVATE_KEY`。解密、上下文、到期和摘要验证全部通过才写出 mode 0600 的计划。审批者审查的是相同计划的公开安全摘要，apply 执行保存计划，不重新生成计划。
+
+摘要只接受有限枚举、布尔值、有界数字和端口；具体 IP、任意字符串、ID、标签、变量、输出、敏感及未知值隐藏。Terraform 原始输出不发布，统一执行器只报告固定错误类别，临时日志删除；必要的详细诊断由授权身份在受限位置复现。
+
+PR 检查不获得 Azure 凭据、OIDC 或 state。foundation mock 测试验证新组名、角色动作和 scope，并纳入必需的 Security Checks；普通 validate 还覆盖三个根模块。
+
+## 写入串行与资源生命周期
+
+完整部署、销毁和恢复共用写入队列，queue:max 最多保留 100 个等待请求；生产审批等待也占用队列。plan-only 走独立只读队列，可能与写入并发，因此只是预览参考。apply 申请 state lease 并拒绝 state serial 已改变的计划；该校验不能替代云端漂移检查。
+
+管理员运行 foundation 时必须暂停上述写入工作流并确保没有活动执行者，避免权限和 backend 初始化与正在执行的部署并发。
+
+test apply 完成或失败后立即清理，测试与清理均成功才进入生产审批。独立恢复在运行结束后检查是否尝试过 test 部署，并每 6 小时兜底；只 checkout main、使用 test 身份与 test state。恢复不读取触发运行的代码或 artifact，并拒绝其他仓库事件。
+
+Key Vault 保持 RBAC、默认拒绝网络及 purge protection；诊断 Storage 默认 Deny、仅放行 Azure 可信服务。普通业务身份的 secret 数据权限和私网访问需另行配置，test 仍只验证 network。
+
+销毁保留 foundation 的组与授权；Key Vault/Log Analytics 不永久 purge。诊断 Storage 属于业务销毁范围，其归档日志不会因上述软删除策略得到保护。未来生产审计需要独立的长期存储生命周期。
+
+## 历史配置
+
+旧 `bootstrap_security.py prepare/retire` 创建身份、迁移旧 state 并撤销旧 executor 权限。v2 不调用它重新迁移历史 state，只复用其中的 CLI 包装函数；新初始化遵循 FRESH_START。
+
+旧 workload 根模块的 removed/destroy=false 块仅为历史资源组地址兼容保留；它们不会从独立 foundation state 删除资源组。下一代再次从零重建时，必须同时选择新组名、generation、backend key 和初始化允许列表，避免两个 state 接管同一批活跃资源。
