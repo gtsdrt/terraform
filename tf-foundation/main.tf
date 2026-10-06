@@ -50,21 +50,20 @@ resource "azurerm_role_definition" "plan_reader" {
 }
 
 resource "azurerm_role_assignment" "plan_reader" {
-  for_each                         = local.group_names
-  scope                            = "${local.subscription_scope}/resourceGroups/${azurerm_resource_group.workload[each.key].name}"
-  role_definition_id               = azurerm_role_definition.plan_reader.role_definition_resource_id
-  principal_id                     = var.principal_ids.plan
-  principal_type                   = "ServicePrincipal"
-  skip_service_principal_aad_check = true
+  for_each           = local.group_names
+  scope              = "${local.subscription_scope}/resourceGroups/${azurerm_resource_group.workload[each.key].name}"
+  role_definition_id = azurerm_role_definition.plan_reader.role_definition_resource_id
+  principal_id       = var.principal_ids.plan
+  principal_type     = "ServicePrincipal"
 }
 
+# principal_type 已明确 SP；省略仅创建时使用的 skip 标志，避免导入后触发不支持的 update。
 resource "azurerm_role_assignment" "apply" {
-  for_each                         = local.apply_groups
-  scope                            = "${local.subscription_scope}/resourceGroups/${azurerm_resource_group.workload[each.key].name}"
-  role_definition_name             = "Contributor"
-  principal_id                     = var.principal_ids[each.value]
-  principal_type                   = "ServicePrincipal"
-  skip_service_principal_aad_check = true
+  for_each             = local.apply_groups
+  scope                = "${local.subscription_scope}/resourceGroups/${azurerm_resource_group.workload[each.key].name}"
+  role_definition_name = "Contributor"
+  principal_id         = var.principal_ids[each.value]
+  principal_type       = "ServicePrincipal"
 }
 
 # AzureRM 创建 Key Vault 时会查询同名 deleted vault；仅授予元数据读取，不允许恢复或 purge。
@@ -82,9 +81,8 @@ resource "azurerm_role_definition" "deleted_vault_reader" {
 }
 
 resource "azurerm_role_assignment" "deleted_vault_reader" {
-  scope                            = local.subscription_scope
-  role_definition_id               = azurerm_role_definition.deleted_vault_reader.role_definition_resource_id
-  principal_id                     = var.principal_ids.prod
-  principal_type                   = "ServicePrincipal"
-  skip_service_principal_aad_check = true
+  scope              = local.subscription_scope
+  role_definition_id = azurerm_role_definition.deleted_vault_reader.role_definition_resource_id
+  principal_id       = var.principal_ids.prod
+  principal_type     = "ServicePrincipal"
 }

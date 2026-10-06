@@ -103,6 +103,8 @@ terraform -chdir=tf-foundation output resource_groups
 
 foundation 的远程 state 由管理员使用，GitHub 的 plan/test/prod 身份不授予该容器的数据权限，因此它们不能改动其中的资源组或授权记录。
 
+如果使用早期版本初始化遇到 Contributor 授权的 `doesn't support update`，原因是导入后的 `skip_service_principal_aad_check` 空值与配置中的 true 产生更新差异，而 AzureRM 4.81 不支持角色分配 update。最新 foundation 省略该可选标志，保留 `principal_type = "ServicePrincipal"`。更新修复分支后重新 plan，核对三个 Contributor 授权为 no-op，再 apply 新计划；已经成功创建或导入的对象继续由现有 state 管理。旧的保存计划仍包含错误更新动作，不能用于这次重试。
+
 ## 6. 新业务名称如何避开软删除
 
 业务组名包含 v2，Landing Zone 的 Key Vault/Storage/Log Analytics 后缀由订阅 ID、资源组名、前缀和 `deployment_generation = "v2"` 共同计算。后缀稳定，不会每次 plan 改变，也与旧 `kv-azlz-9ee601` 等名字不同。
