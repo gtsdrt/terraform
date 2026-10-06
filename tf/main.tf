@@ -32,14 +32,15 @@ output "resource_group" {
 }
 
 # ── Landing Zone ──
-# 只放在生产环境：资源组名固定为 azlandingzone，且 Key Vault 删除后有软删除保护，
+# 只放在生产环境：使用 foundation 创建的 v2 资源组与新的资源名称，
 # 放进"每次 push 都建了又删"的 tf-test 环境第二次就会因为名字被占用而失败。
 module "azlandingzone" {
   source = "../modules/azlandingzone"
 
-  resource_group_name = "azlandingzone"
-  location            = var.location
-  name_prefix         = "azlz"
+  resource_group_name   = "azlandingzone-v2"
+  location              = var.location
+  name_prefix           = "azlz"
+  deployment_generation = "v2"
 
   tags = {
     managed_by = "terraform"
@@ -61,7 +62,7 @@ output "azlandingzone" {
 # ── 把已有资源从根模块迁进 module ──
 #    没有这些 moved 块，Terraform 会认为旧地址的资源被删除、新地址是新建，
 #    从而把已经存在的 13 个资源 destroy 再 create。apply 成功后这些块就是空操作。
-# Resource groups are bootstrapped once and retained as RBAC boundaries.
+# Resource groups are managed by tf-foundation and retained as RBAC boundaries.
 # Forget historical managed addresses without deleting the groups in Azure.
 removed {
   from = azurerm_resource_group.main

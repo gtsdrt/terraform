@@ -1,9 +1,9 @@
 data "azurerm_client_config" "current" {}
 
 locals {
-  # 由资源组名 + 前缀推导出的稳定后缀，满足 Key Vault / 存储账户"全局唯一"的命名要求。
+  # 订阅、资源组、前缀与重建代号共同生成稳定后缀，隔离旧软删除名称。
   # 用 hash 而不是 random provider：不需要额外 provider，也不会每次 plan 都变。
-  suffix = substr(sha256("${var.resource_group_name}-${var.name_prefix}"), 0, 6)
+  suffix = substr(sha256("${data.azurerm_client_config.current.subscription_id}-${var.resource_group_name}-${var.name_prefix}-${var.deployment_generation}"), 0, 10)
 
   key_vault_name       = coalesce(var.key_vault_name, "kv-${var.name_prefix}-${local.suffix}")
   storage_account_name = coalesce(var.storage_account_name, "st${replace(lower(var.name_prefix), "-", "")}${local.suffix}")

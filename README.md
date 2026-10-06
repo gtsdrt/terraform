@@ -1,123 +1,80 @@
 # Terraform on GitHub Actions
 
-Azure 网络与 Landing Zone，使用 GitHub OIDC、生产环境审批和加密计划产物。
-详细权限模型和迁移步骤见 [安全架构](docs/ARCHITECTURE.md)。
+Azure 网络与 Landing Zone 的 v2 从零重建配置。资源组和限定授权现在由独立的 Terraform foundation 创建、管理；业务部署继续使用 GitHub OIDC、生产审批及加密计划。
 
-## 环境与资源
+- 首次初始化：[从零重建说明](docs/FRESH_START.md)
+- 日常操作：[部署、审批、销毁与恢复](docs/DEPLOYMENT_GUIDE.md)
+- 权限边界：[安全架构](docs/ARCHITECTURE.md)
 
-| 环境 | 资源组 | Terraform state | Azure 身份 |
+## 层与资源
+
+| 层 | 目录 | 资源组 | state 容器 / 文件 |
 |---|---|---|---|
-| prod (`tf/`) | `terraform-prod`、`azlandingzone` | `tfstate-prod/executor.tfstate` | `gtsdrt-terraform-prod` |
-| test (`tf-test/`) | `terraform-test` | `tfstate-test/terraform-test.tfstate` | `gtsdrt-terraform-test` |
-| plan | 只读上述三个资源组及两个 state 容器 | 不写入、不申请 lease | `gtsdrt-terraform-plan` |
+| foundation | `tf-foundation/` | 创建并保留三个 v2 组及授权 | `tfstate-foundation/foundation-v2.tfstate` |
+| prod | `tf/` | `terraform-prod-v2`、`azlandingzone-v2` | `tfstate-prod/executor-v2.tfstate` |
+| test | `tf-test/` | `terraform-test-v2` | `tfstate-test/terraform-test-v2.tfstate` |
 
-资源组由管理员一次性创建并保留，作为 RBAC 边界；Terraform 仅管理组内资源。
-`removed` 块把历史上的资源组地址从 state 中移除，`destroy = false` 保证迁移不删除资源组。
-网络模块创建两个 VNet、四个子网、两个 NSG 和四个关联（12 个资源）。
-生产还创建 Landing Zone 的 25 个资源，合计 37 个；资源组不计入 managed resources。
-HTTPS 入站只接受 `VirtualNetwork` 来源。
+现有 state 账户 `gtsdrtterraform2`、backend 资源组 `Terraform` 和三个 OIDC 身份保留。旧 state 文件原样保留；新初始化脚本只创建缺失的 v2 文件，禁止覆盖。业务名称使用包含订阅与重建代号的稳定后缀，避开旧软删除名称，不 purge 或自动恢复旧 Key Vault。
+
+foundation 由具备资源组创建及 RBAC 管理权限的 Azure 管理员执行，创建 3 个组、2 个自定义角色和 7 个角色分配。资源组设有 `prevent_destroy`；日常 GitHub 工作流只操作 prod/test state，不删除 foundation 的资源组或授权。
+
+prod 管理 37 个业务资源，test 管理 12 个 network 资源。test 不覆盖 Landing Zone 的实际 apply。NSG 的现有 HTTPS 规则不代表其他内部端口已被拒绝；网络最小权限需按业务需求另行完善。
+
+## 从零初始化
+
+先从功能分支执行管理员初始化，完成后合入 main 并恢复工作流。详细的暂停、登录、验收步骤见 [FRESH_START](docs/FRESH_START.md)。
+
+```bash
+# 管理员以 Azure CLI 登录目标订阅；先确保写入工作流暂停且没有活动运行。
+python3 scripts/prepare_fresh_start.py
+python3 scripts/prepare_fresh_start.py --apply
+terraform -chdir=tf-foundation init -reconfigure -input=false -lockfile=readonly
+terraform -chdir=tf-foundation plan -var-file=foundation.tfvars.local.json -out=foundation.tfplan
+terraform -chdir=tf-foundation apply foundation.tfplan
+```
+
+默认脚本只读核对身份并生成本地输入；`--apply` 仅准备 backend、空 state 和容器数据权限。创建资源组和业务角色由随后执行的 foundation Terraform 完成。仅有 Contributor 的执行者不能创建 RBAC，需要管理员的相应授权能力。
 
 ## PR 检查
 
-所有面向 main 的 PR（包括 fork 和只改文档的 PR）都运行三个固定检查：
+所有面向 main 的 PR（包括 fork、仅文档改动）均执行：
 
-- `Terraform Validate (tf)`
-- `Terraform Validate (tf-test)`
-- `Security Checks`：全历史及工作树 Gitleaks 扫描、加密/防重放/过期/摘要脱敏测试，以及 actionlint 工作流检查。
+- `Terraform Validate (tf)`、`Terraform Validate (tf-test)`、`Terraform Validate (tf-foundation)`。
+- `Security Checks`：Python 安全/初始化测试、foundation 权限与业务名称的 Terraform mock 测试、固定版本 actionlint、Gitleaks 全历史和工作树扫描。
 
-PR 不接触 Azure 凭据、不读取生产 state、不获得 OIDC 权限、不上传 plan。
-Actions 固定完整 commit SHA，checkout 不保留 Git 凭据，Gitleaks 下载校验固定 SHA-256。
+main 已要求前两个 validate 和 Security Checks；foundation 的 mock 测试纳入 Security Checks，保持必需检查覆盖。PR 不获得 Azure 凭据、OIDC 或生产 state。Actions 固定完整 SHA，工具下载校验固定摘要。
 
-## 部署与预览
+## 部署
 
 ```bash
-gh workflow run deploy.yml --ref main -f mode=plan-only
-gh workflow run deploy.yml --ref main -f mode=full
+gh workflow run deploy.yml --repo gtsdrt/terraform --ref main -f mode=plan-only
+gh workflow run deploy.yml --repo gtsdrt/terraform --ref main -f mode=full
 ```
 
-仅 main 能执行。full 的流程为：
+只有 main 可部署；命中 `tf/**`、`tf-test/**`、`modules/**` 或 `.github/**` 的 main push 自动 full。仅 README/docs 改动不自动部署。foundation 没有自动 apply 工作流，必须由管理员单独维护。
 
 ```text
-plan (tf-test, tf) → 加密并上传准确的计划
-                  → deploy-test（test 身份与私钥）
-                  → cleanup-test（测试成功或失败后清理，保留空资源组）
-                  → deploy-prod（测试与清理均成功，production 审批后获得生产身份与私钥）
+管理员：准备 v2 backend → Terraform foundation 创建组与授权
+GitHub：plan(tf-test, tf) → test apply → test cleanup → production 审批 → prod apply
 ```
 
-公开摘要显示资源地址、动作和明确允许的安全字段：NSG 方向/允许拒绝/协议/端口/已知服务标签，
-Key Vault 与 Storage 保护开关及网络默认策略，日志保留天数等。具体 IP、任意字符串、资源 ID、
-标签、变量、输出值及 sensitive 字段不发布；未知字段明确标注等待 apply，不能据此推断安全。
-plan-only 不上传 plan，使用独立预览队列，可在生产等待审批时运行；与写入并发的预览仅供参考。
-plan 使用读权限且 `-lock=false`；部署、销毁和恢复清理共用写入队列，`queue: max` 最多保留 100 个待运行请求。
-写入流程（包括生产审批等待）仍保持互斥，避免审批期间另一次写入改变受审计划；apply 获取 state lease。
-state serial 已变化时 Terraform 拒绝旧计划，但这不能替代云端漂移检查。state 的两个文件在 bootstrap 时已存在。
+推荐由 `gtsdrt` 合入代码/发起部署，`atea-shuangliang` 审批 production。PR 的 Approve/Merge 和 Actions 的 Review deployments / Approve and deploy 是两种不同操作。production 禁止自行审批及管理员绕过。
 
-完整 plan 使用 RSA 公钥封装和 AES-256-GCM 认证加密。公钥证书在 `.github/plan-keys/`；
-私钥只存于对应 GitHub environment 的 `TF_PLAN_PRIVATE_KEY` secret。
-解密同时检查 repository、commit、run ID、环境、操作目的、销毁范围和文件摘要，禁止跨运行、环境或目的重放。
-计划自加密起有效 24 小时，截止时间显示在摘要中；密文保留 3 天，过期仍拒绝 apply，并提示重新发起完整运行。
-重跑整个 workflow 会生成新摘要，必须审查新计划；仅重跑 apply 不会延长有效期。
-Terraform 原始输出不进入公开日志，失败只显示固定错误类别（权限、锁、旧计划、配额、名称冲突、网络或 provider 注册）。
-临时日志在步骤结束时删除；仍需详细诊断时用有权限的本地身份复现，不应公开 state 或原始计划/日志。
+计划使用只读身份；两个 apply 身份各自取得对应环境的私钥。计划绑定仓库、提交、run ID、环境、操作目的和销毁范围，24 小时后拒绝执行，密文保留 3 天。公开摘要仅显示资源动作及允许列表中的安全字段，敏感值和任意属性不公开。
 
-测试资源不等待生产审批：测试结束后立即清理；测试或清理失败都会阻止生产部署。
-`Terraform Test Recovery` 在部署运行结束（含取消）后检查是否尝试过 test 部署，并每 6 小时兜底清理。
-恢复只 checkout main，不读取触发运行的代码或 artifact，只使用 test 身份和 test state；保留测试资源组。
-恢复也参与写入队列，不会在另一次完整部署/销毁期间清理资源；如果运行仍等待审批，需批准或取消后才释放队列。
+完整部署、销毁和恢复使用共享写入队列，生产审批等待也占用队列；plan-only 使用独立只读队列。测试与清理都成功才进入生产审批。取消后的恢复与每 6 小时兜底仅清理 test state、保留组。
 
-## 销毁与恢复
+## 销毁
 
 ```bash
-gh workflow run destroy.yml --ref main -f env=tf -f scope=all -f confirm=DESTROY
-gh workflow run destroy.yml --ref main -f env=tf -f scope=network -f confirm=DESTROY
-gh workflow run destroy.yml --ref main -f env=tf-test -f scope=all -f confirm=DESTROY
+gh workflow run destroy.yml --repo gtsdrt/terraform --ref main -f env=tf -f scope=network -f confirm=DESTROY
+gh workflow run destroy.yml --repo gtsdrt/terraform --ref main -f env=tf -f scope=all -f confirm=DESTROY
+gh workflow run destroy.yml --repo gtsdrt/terraform --ref main -f env=tf-test -f scope=all -f confirm=DESTROY
 ```
 
-销毁先由只读 plan 身份生成准确的删除清单并加密，之后才进入 production/test 环境。
-生产审批人先检查 plan job 的摘要；审批后仅执行已保存的 destroy plan，不重新计算销毁范围。
-确认串作为环境变量按字面比较，不拼接为 Shell 代码。
-**销毁 Landing Zone 会删除诊断存储账户和其中的归档日志**，当前模块没有独立的长期审计存储保护。
-Key Vault/Log Analytics 的软删除不会保护这个存储账户；重要日志应独立保留后再审批销毁。
-资源组保留；Key Vault 和 Log Analytics 仅软删除，不自动 purge，也不自动删除恢复用资源组。
-生产 Key Vault 开启 purge protection，开启后不能关闭。销毁之后同名重建可能需要管理员先恢复资源；
-不要用 purge 作为日常回滚。Key Vault 使用默认拒绝的网络 ACL，RBAC 的业务访问角色需按应用另行授权。
+销毁先展示准确删除清单，生产审批后 apply 同一份加密 destroy plan。它不操作 foundation state。Key Vault/Log Analytics 不永久 purge；诊断 Storage 会随 Landing Zone 被删除，其归档日志不受上述软删除设置保护。具体处理见操作指南。
 
-## 一次性安全迁移
-
-先完成代码审查和本地验证，再由管理员执行：
-
-```bash
-az login
-gh workflow disable deploy.yml --repo gtsdrt/terraform
-gh workflow disable destroy.yml --repo gtsdrt/terraform
-python3 scripts/bootstrap_security.py prepare
-```
-
-该脚本不生成 Client Secret。它创建三个独立 OIDC 身份，给 apply 身份指定资源组 Contributor、
-给 plan 指定资源组只读权限（包含刷新诊断资源所需的密钥读取操作），并隔离 state 数据权限。
-原 state 从 `tfstate` 容器逐字节复制到新容器，校验 SHA-256，不覆盖不同的已有目标文件；原文件保留。
-执行者临时获得 state 账户的数据面权限，复制完成或失败时撤销该临时授权。
-
-脚本会设置 GitHub repository variables：
-
-- `TERRAFORM_AZURE_SUBSCRIPTION_ID`、`TERRAFORM_AZURE_TENANT_ID`
-- `TERRAFORM_PLAN_AZURE_CLIENT_ID`、`TERRAFORM_TEST_AZURE_CLIENT_ID`、`TERRAFORM_PROD_AZURE_CLIENT_ID`
-
-它还生成两个公钥证书并把私钥直接写到 GitHub 的 production/test 环境 secret；私钥临时文件随后删除。
-公钥证书需与代码一同提交。重复执行会保留已有证书，不自动轮换私钥。
-
-代码合入、plan-only 验证通过后：
-
-```bash
-python3 scripts/bootstrap_security.py retire
-gh workflow enable deploy.yml --repo gtsdrt/terraform
-gh workflow enable destroy.yml --repo gtsdrt/terraform
-```
-
-retire 撤销旧专用执行身份的所有 Azure 角色与 Client Secret，删除旧 repository secrets，
-并禁用 state 账户的 Shared Key 和匿名 Blob 访问。它不会删除原 state 或 App Registration。
-GitHub main 应要求 PR、上述三个检查、一次批准及讨论解决；production 保留审批人，禁止自行审批与管理员绕过。
-production/test 的部署分支均只允许 main。
+`Terraform Deploy` 表单只有 `full / plan-only`。出现 `network` 和 `DESTROY` 确认字段时，当前入口是 `Terraform Destroy`，不能用于部署。
 
 ## 本地验证
 
@@ -127,14 +84,16 @@ terraform -chdir=tf init -backend=false -input=false -lockfile=readonly
 terraform -chdir=tf validate
 terraform -chdir=tf-test init -backend=false -input=false -lockfile=readonly
 terraform -chdir=tf-test validate
+terraform -chdir=tf-foundation init -backend=false -input=false -lockfile=readonly
+terraform -chdir=tf-foundation validate
+terraform -chdir=tf-foundation test
+terraform -chdir=tf test
 python3 -m unittest discover -s tests -v
 python3 .github/scripts/check_workflows.py /path/to/actionlint
 gitleaks git --redact
 gitleaks dir --redact
 ```
 
-加密测试需要 OpenSSL 3（macOS 可指定 `OPENSSL_BIN`）。CI 固定 actionlint 1.7.12 并校验下载摘要。
-GitHub 已支持 `queue: max`，该 actionlint 版本尚未支持；检查脚本仅将顶层 concurrency 中完全匹配的
-`queue: max` 行改为注释再校验，其余内容和行号保留，其他 queue 写法仍会报错。
-读取远程 state 时先获得相应数据面权限，使用 `terraform init -reconfigure` 切换到已迁移的新 backend；
-不要仅改 state key，也不要把本地空 state 覆盖到远程。
+mock 测试不接触 Azure。加密测试需要 OpenSSL 3，macOS 可指定 `OPENSSL_BIN`。actionlint 1.7.12 尚不识别 GitHub 的 `queue: max`，检查适配器仅注释该确切顶层设置并验证取消冲突，其余工作流照常校验。
+
+历史 `bootstrap_security.py prepare/retire` 用于旧 state 迁移与旧身份停用；v2 从零重建使用新的 `prepare_fresh_start.py`，不重新迁移或清空历史 state。

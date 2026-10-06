@@ -4,6 +4,6 @@ terraform {
     storage_account_name = "gtsdrtterraform2"
     container_name       = "tfstate-prod"
     use_azuread_auth     = true
-    key                  = "executor.tfstate"
+    key                  = "executor-v2.tfstate"
   }
 }
