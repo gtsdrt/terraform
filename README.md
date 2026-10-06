@@ -2,9 +2,12 @@
 
 Azure 网络与 Landing Zone 的 v2 从零重建配置。资源组和限定授权现在由独立的 Terraform foundation 创建、管理；业务部署继续使用 GitHub OIDC、生产审批及加密计划。
 
+2026-10-06 的 v2 完整部署已成功，三个业务资源组均位于 `westeurope`，测试资源已清理。运行链接、审批人与 Azure 验收结果见[部署记录](docs/DEPLOYMENT_RECORD_2026-10-06.md)。后续日常部署使用 main 的 `plan-only → full`，按当前变更生成和审批新计划。
+
 - 首次初始化：[从零重建说明](docs/FRESH_START.md)
 - 日常操作：[部署、审批、销毁与恢复](docs/DEPLOYMENT_GUIDE.md)
 - 权限边界：[安全架构](docs/ARCHITECTURE.md)
+- 本次部署：[v2 验证记录](docs/DEPLOYMENT_RECORD_2026-10-06.md)
 
 ## 层与资源
 
@@ -22,7 +25,7 @@ prod 管理 37 个业务资源，test 管理 12 个 network 资源。test 不覆
 
 ## 从零初始化
 
-先从功能分支执行管理员初始化，完成后合入 main 并恢复工作流。详细的暂停、登录、验收步骤见 [FRESH_START](docs/FRESH_START.md)。
+当前环境已完成初始化。本节用于首次初始化或管理员维护 foundation；日常部署使用下方 GitHub 流程。v2 初始化代码已通过 PR #16 合入 main，详细的暂停、登录、接管已有组及验收步骤见 [FRESH_START](docs/FRESH_START.md)。
 
 ```bash
 # 管理员以 Azure CLI 登录目标订阅；先确保写入工作流暂停且没有活动运行。
