@@ -49,7 +49,7 @@ jobs:
         run: |
           recover=true
           if [[ "$GITHUB_EVENT_NAME" == workflow_run ]]; then
-            recover=$(gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/actions/runs/$SOURCE_RUN_ID/jobs" --jq '[.[].jobs[] | select(.name == "deploy-test" and (.conclusion == "success" or .conclusion == "failure" or .conclusion == "cancelled"))] | length > 0')
+            recover=$(gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/actions/runs/$SOURCE_RUN_ID/jobs" | jq '[.[].jobs[] | select(.name == "deploy-test" and (.conclusion == "success" or .conclusion == "failure" or .conclusion == "cancelled"))] | length > 0')
           fi
           echo "needed=$recover" >> "$GITHUB_OUTPUT"
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
