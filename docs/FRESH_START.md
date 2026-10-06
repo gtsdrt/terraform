@@ -69,6 +69,10 @@ python3 scripts/prepare_fresh_start.py --apply
 
 脚本从仓库变量读取三个 Client ID，通过 Azure 查出对应的 service principal Object ID，验证它们属于当前目标配置，然后写入 `tf-foundation/foundation.tfvars.local.json`。此文件排除在 Git 之外，权限为 0600，包含身份元数据，不含密钥。
 
+如果已经在 Portal 创建 v2 组和对应身份的组范围 Contributor 授权，脚本还会生成 `tf-foundation/imports.local.tf`。此文件仅包含这三个组和匹配 Contributor 授权的 import 块，排除在 Git 外；默认预览生成文件不修改 Azure 或 state。已有组的区域会写入输入，例如 `westeurope`，避免按默认 `norwayeast` 计划替换它们。不同组区域不一致、重复或带条件的 Contributor 授权需要先人工核对，脚本会停止。
+
+普通 Reader 授权保持原状，不作为自定义 Plan Reader 导入；foundation 会补充生产诊断资源刷新所需的 listKeys/sharedKeys 操作，以及生产创建 Key Vault 所需的 deleted-vault 元数据读取。给 test/prod Contributor 后，仍需完成这些授权。
+
 `--apply` 的具体操作：
 
 1. 保留现有 state 账户，创建/保留三个私有容器；新增 `tfstate-foundation`。
@@ -91,11 +95,11 @@ terraform -chdir=tf-foundation apply foundation.tfplan
 terraform -chdir=tf-foundation output resource_groups
 ```
 
-预期 foundation 计划创建 12 个 managed resources：3 个资源组、2 个自定义角色、7 个角色分配。核对计划中只包含这些新对象，尤其检查角色分配范围及 principal IDs，再执行 apply。
+全部对象不存在时，foundation 计划创建 12 个 managed resources：3 个资源组、2 个自定义角色、7 个角色分配。如果已经手动创建三个组及三个 Contributor 授权，预计导入这 6 个对象，创建剩余 6 个授权相关对象，并可能更新资源组标签。核对计划中只包含这些对象的创建、导入或标签更新，尤其检查角色分配范围及 principal IDs；资源组应无删除或替换，然后再执行 apply。import 块随该保存计划一起执行。[Terraform import 的工作方式](https://developer.hashicorp.com/terraform/language/import)
 
-三个新组的位置默认是 `norwayeast`。初始化成功后等待 RBAC 传播，再运行业务 plan。反复 apply foundation 会对照其 state 更新缺失或漂移的基础资源，不应另行手工创建同名组。
+全新组的位置默认是 `norwayeast`；已有组保留脚本检测到的位置，network 和 Landing Zone 业务资源也使用各自组的位置。初始化成功后等待 RBAC 传播，再运行业务 plan。反复 apply foundation 会对照其 state 更新缺失或漂移的基础资源。
 
-如果新组已由其他方式创建，先由管理员核对后 import 到 foundation state，不能强行覆盖；`prevent_destroy` 也不会允许把已受管组直接替换掉。
+如果已有组由另一个 Terraform state 管理，应先由管理员协调所有权，不能重复导入。对于这次在 Portal 手动建立的 v2 组，核对上述自动生成的 import 块后，通过 foundation 的保存计划接管。
 
 foundation 的远程 state 由管理员使用，GitHub 的 plan/test/prod 身份不授予该容器的数据权限，因此它们不能改动其中的资源组或授权记录。
 

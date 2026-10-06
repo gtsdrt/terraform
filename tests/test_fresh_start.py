@@ -25,7 +25,7 @@ class FreshStartTests(unittest.TestCase):
             self.principals[kind] = {'appId': client, 'id': object_id, 'displayName': f'gtsdrt-terraform-{kind}'}
         self.account = {'id': self.subscription, 'tenantId': self.tenant}
 
-    def prepare_with_metadata(self, directory, apply=False, runs=None):
+    def prepare_with_metadata(self, directory, apply=False, runs=None, groups=None, roles=None):
         (Path(directory) / 'tf-foundation').mkdir()
         def metadata(*args):
             if args == ('account', 'show'):
@@ -34,6 +34,10 @@ class FreshStartTests(unittest.TestCase):
                 return next(service for service in self.principals.values() if service['appId'] == args[-1])
             if args[:3] == ('storage', 'account', 'show'):
                 return {'id': '/existing-state-account'}
+            if args == ('group', 'list'):
+                return groups or []
+            if args == ('role', 'assignment', 'list', '--all'):
+                return roles or []
             self.fail(f'Unexpected Azure request before initialization: {args[:3]}')
         variables = json.dumps([{'name': key, 'value': value} for key, value in self.variables.items()])
         with patch.object(fresh.bootstrap, 'ROOT', Path(directory)), patch.object(fresh.bootstrap, 'call', return_value=variables), patch.object(fresh.bootstrap, 'az', side_effect=metadata), patch.object(fresh.bootstrap, 'gh_json', return_value={'workflow_runs': runs or []}):
@@ -45,6 +49,48 @@ class FreshStartTests(unittest.TestCase):
             path = Path(directory) / 'tf-foundation/foundation.tfvars.local.json'
             self.assertEqual(path.stat().st_mode & 0o777, 0o600)
             self.assertEqual(json.loads(path.read_text())['subscription_id'], self.subscription)
+
+    def existing_objects(self):
+        config = fresh.configuration(self.variables, self.account, self.principals)
+        groups, roles = [], []
+        for index, (key, name) in enumerate(fresh.GROUP_NAMES.items(), 1):
+            scope = f'/subscriptions/{self.subscription}/resourceGroups/{name}'
+            groups.append({'name': name, 'id': scope, 'location': 'westeurope'})
+            roles.append({'scope': scope, 'principalId': config['principal_ids']['test' if key == 'test' else 'prod'],
+                          'principalType': 'ServicePrincipal',
+                          'roleDefinitionId': f'/subscriptions/{self.subscription}/providers/Microsoft.Authorization/roleDefinitions/{fresh.CONTRIBUTOR_ID}',
+                          'id': f'{scope}/providers/Microsoft.Authorization/roleAssignments/aaaaaaaa-0000-0000-0000-{index:012d}'})
+        return config, groups, roles
+
+    def test_existing_groups_and_grants_are_imported_without_changing_region(self):
+        config, groups, roles = self.existing_objects()
+        reader = {**roles[0], 'principalId': config['principal_ids']['plan'],
+                  'roleDefinitionId': '/providers/Microsoft.Authorization/roleDefinitions/acdd72a7-3385-48ef-bd42-f606fba81ae7'}
+        config, imports = fresh.adoption(config, groups, roles + [reader])
+        self.assertEqual(config['location'], 'westeurope')
+        self.assertEqual(len(imports), 6)
+        self.assertNotIn('azurerm_role_assignment.plan_reader["prod"]', imports)
+        with tempfile.TemporaryDirectory() as directory:
+            self.prepare_with_metadata(directory, groups=groups, roles=roles + [reader])
+            source = Path(directory) / 'tf-foundation/imports.local.tf'
+            self.assertEqual(source.stat().st_mode & 0o777, 0o600)
+            self.assertEqual(source.read_text().count('import {'), 6)
+            self.assertEqual(json.loads((source.parent / 'foundation.tfvars.local.json').read_text())['location'], 'westeurope')
+
+    def test_existing_objects_from_wrong_scopes_or_principals_are_not_adopted(self):
+        config, groups, roles = self.existing_objects()
+        wrong = [{**role, 'principalId': config['principal_ids']['plan']} for role in roles]
+        _, imports = fresh.adoption(config, groups, wrong)
+        self.assertEqual(len(imports), 3)
+        with self.assertRaisesRegex(ValueError, 'another subscription'):
+            fresh.adoption(config, [{**groups[0], 'id': '/subscriptions/another/resourceGroups/terraform-prod-v2'}], roles)
+
+    def test_conditional_grants_and_mixed_group_regions_require_review(self):
+        config, groups, roles = self.existing_objects()
+        with self.assertRaisesRegex(ValueError, 'conditional'):
+            fresh.adoption(config, groups, [{**roles[0], 'condition': 'restricted'}])
+        with self.assertRaisesRegex(ValueError, 'different locations'):
+            fresh.adoption(config, [{**groups[0], 'location': 'norwayeast'}, groups[1]], roles)
 
     def test_active_writer_blocks_setup_before_any_azure_write(self):
         for name in ('Terraform Deploy', 'Terraform Destroy', 'Terraform Test Recovery'):

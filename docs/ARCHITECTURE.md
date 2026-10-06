@@ -29,7 +29,7 @@ plan 因刷新计算属性会读取诊断密钥，仍属于敏感数据身份。
 
 ## 从零准备与 state
 
-backend 资源组 `Terraform`、存储账户 `gtsdrtterraform2` 是现有管理基础设施，不放进业务 state。`prepare_fresh_start.py` 在核对订阅、租户、三个 Client ID 与 Object ID 后生成排除在 Git 外的本地输入。
+backend 资源组 `Terraform`、存储账户 `gtsdrtterraform2` 是现有管理基础设施，不放进业务 state。`prepare_fresh_start.py` 在核对订阅、租户、三个 Client ID 与 Object ID 后生成排除在 Git 外的本地输入。如果 v2 组和对应 Contributor 授权已存在，还生成本地 import 块，保留现有组区域；仅导入确定匹配的组、身份、角色和 scope，普通 Reader 或其他身份的授权保持原状。import 在管理员审查后的 foundation plan/apply 中执行。
 
 管理员使用初始化脚本建立/保留私有容器并初始化缺失的 v2 文件：
 

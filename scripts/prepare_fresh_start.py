@@ -24,6 +24,8 @@ STATE_FILES = (
     ('tfstate-test', 'terraform-test-v2.tfstate'),
 )
 KINDS = ('plan', 'test', 'prod')
+GROUP_NAMES = {'prod': 'terraform-prod-v2', 'test': 'terraform-test-v2', 'platform': 'azlandingzone-v2'}
+CONTRIBUTOR_ID = 'b24988ac-6180-42a0-ab88-20f7382dd24c'
 
 
 def guid(value):
@@ -52,6 +54,50 @@ def configuration(variables, account, principals):
 def empty_state():
     return {'version': 4, 'terraform_version': '1.9.8', 'serial': 0,
             'lineage': str(uuid.uuid4()), 'outputs': {}, 'resources': [], 'check_results': None}
+
+
+def adoption(config, groups, roles):
+    """Describe imports for existing v2 groups and exact Contributor grants only."""
+    config = dict(config)
+    subscription_scope = f"/subscriptions/{config['subscription_id']}"
+    imports = {}
+    locations = set()
+    for key, name in GROUP_NAMES.items():
+        scope = f'{subscription_scope}/resourceGroups/{name}'
+        matches = [group for group in groups if group['name'].lower() == name.lower()]
+        if len(matches) > 1:
+            raise ValueError('Multiple matching v2 groups; review before importing.')
+        if matches:
+            group = matches[0]
+            if group['id'].lower() != scope.lower():
+                raise ValueError('Existing v2 group belongs to another subscription.')
+            locations.add(group['location'])
+            imports[f'azurerm_resource_group.workload["{key}"]'] = group['id']
+        principal = config['principal_ids']['test' if key == 'test' else 'prod']
+        grants = [role for role in roles if role['scope'].lower() == scope.lower()
+                  and role['principalId'].lower() == principal
+                  and role['roleDefinitionId'].rsplit('/', 1)[-1].lower() == CONTRIBUTOR_ID]
+        if len(grants) > 1 or any(role.get('condition') for role in grants):
+            raise ValueError('Duplicate or conditional Contributor grant; review before importing.')
+        if grants:
+            grant = grants[0]
+            assignment_id = guid(grant['id'].rsplit('/', 1)[-1])
+            expected = f'{scope}/providers/Microsoft.Authorization/roleAssignments/{assignment_id}'
+            if grant['id'].lower() != expected.lower() or grant.get('principalType') != 'ServicePrincipal':
+                raise ValueError('Unexpected Contributor assignment identity or scope.')
+            imports[f'azurerm_role_assignment.apply["{key}"]'] = grant['id']
+    if len(locations) > 1:
+        raise ValueError('Existing v2 groups have different locations; review foundation inputs before proceeding.')
+    if locations:
+        config['location'] = locations.pop()
+    return config, imports
+
+
+def write_local(path, text):
+    descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(descriptor, 'w') as destination:
+        os.chmod(path, 0o600)
+        destination.write(text)
 
 
 def seed_state(container, key):
@@ -118,13 +164,17 @@ def prepare(apply=False):
     config = configuration(variables, account, principals)
     state_account = bootstrap.az('storage', 'account', 'show', '--name', bootstrap.ACCOUNT,
                                  '--resource-group', bootstrap.STATE_RG)
+    config, imports = adoption(config, bootstrap.az('group', 'list'),
+                               bootstrap.az('role', 'assignment', 'list', '--all'))
     path = bootstrap.ROOT / 'tf-foundation/foundation.tfvars.local.json'
     # Inputs contain metadata only; protected locally and excluded by .gitignore.
-    descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-    with os.fdopen(descriptor, 'w') as destination:
-        os.chmod(path, 0o600)
-        json.dump(config, destination, indent=2)
+    write_local(path, json.dumps(config, indent=2) + '\n')
+    source = '# Generated local imports: review in the administrator foundation plan.\n'
+    for target, resource_id in imports.items():
+        source += f'\nimport {{\n  to = {target}\n  id = {json.dumps(resource_id)}\n}}\n'
+    write_local(bootstrap.ROOT / 'tf-foundation/imports.local.tf', source)
     print('Validated distinct identities; wrote tf-foundation/foundation.tfvars.local.json')
+    print(f'Prepared {len(imports)} local imports; foundation location: {config.get("location", "norwayeast")}')
     if not apply:
         print('Preview only: no Azure writes. --apply initializes absent v2 blobs and backend container roles.')
         for container, key in STATE_FILES:

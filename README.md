@@ -33,7 +33,7 @@ terraform -chdir=tf-foundation plan -var-file=foundation.tfvars.local.json -out=
 terraform -chdir=tf-foundation apply foundation.tfplan
 ```
 
-默认脚本只读核对身份并生成本地输入；`--apply` 仅准备 backend、空 state 和容器数据权限。创建资源组和业务角色由随后执行的 foundation Terraform 完成。仅有 Contributor 的执行者不能创建 RBAC，需要管理员的相应授权能力。
+默认脚本只读核对身份并生成本地输入；已有 v2 组及正确的 Contributor 授权会生成本地 import 块，并保留检测到的组区域。`--apply` 仅准备 backend、空 state 和容器数据权限。创建或接管资源组和业务角色由随后执行的 foundation Terraform 完成。仅有 Contributor 的执行者不能创建 RBAC，需要管理员的相应授权能力。
 
 ## PR 检查
 
