@@ -5,6 +5,9 @@ from pathlib import Path
 import subprocess
 import tempfile
 import unittest
+import io
+import sys
+from contextlib import redirect_stdout
 from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -19,6 +22,8 @@ def load(name):
 
 artifact = load("plan_artifact")
 summary = load("plan_summary")
+runner = load("tf_run")
+workflows = load("check_workflows")
 
 
 class SecurityTests(unittest.TestCase):
@@ -78,6 +83,99 @@ class SecurityTests(unittest.TestCase):
         with patch.dict(os.environ, {"TF_PLAN_PRIVATE_KEY": ""}):
             with self.assertRaises(ValueError):
                 artifact.unseal(self.encrypted, self.cert, self.output, "tf")
+
+    def test_expired_plan_is_rejected_without_plaintext(self):
+        with patch.object(artifact.time, "time", return_value=0):
+            artifact.seal(self.plan, self.cert, self.encrypted, "tf")
+        with patch.object(artifact.time, "time", return_value=artifact.PLAN_LIFETIME_SECONDS):
+            with self.assertRaises(artifact.ExpiredPlanError):
+                artifact.unseal(self.encrypted, self.cert, self.output, "tf")
+        self.assertFalse(self.output.exists())
+
+    def test_plan_purpose_and_scope_cannot_be_replayed(self):
+        artifact.seal(self.plan, self.cert, self.encrypted, "tf", "destroy", "network")
+        for purpose, scope in (("deploy", "all"), ("destroy", "all"), ("destroy", "azlandingzone")):
+            with self.subTest(purpose=purpose, scope=scope), self.assertRaises(ValueError):
+                artifact.unseal(self.encrypted, self.cert, self.output, "tf", purpose, scope)
+            self.assertFalse(self.output.exists())
+        artifact.unseal(self.encrypted, self.cert, self.output, "tf", "destroy", "network")
+        self.assertEqual(self.output.read_bytes(), self.plan.read_bytes())
+
+    def test_future_plan_is_rejected_without_plaintext(self):
+        with patch.object(artifact.time, "time", return_value=1000):
+            artifact.seal(self.plan, self.cert, self.encrypted, "tf")
+        with patch.object(artifact.time, "time", return_value=900):
+            with self.assertRaises(ValueError):
+                artifact.unseal(self.encrypted, self.cert, self.output, "tf")
+        self.assertFalse(self.output.exists())
+
+    def test_summary_security_changes_mask_sensitive_and_unknown_fields(self):
+        document = {"resource_changes": [{"address": "azurerm_network_security_rule.test", "type": "azurerm_network_security_rule", "change": {
+            "actions": ["update"],
+            "before": {"access": "Deny", "destination_port_range": "443", "source_address_prefix": "10.99.88.0/24"},
+            "after": {"access": "Allow", "destination_port_range": "8443", "source_address_prefix": "secret-marker", "password": "secret-marker", "priority": 123},
+            "after_sensitive": {"destination_port_range": True}, "after_unknown": {"priority": True}}}]}
+        rendered = summary.summary(document)
+        self.assertIn("Deny", rendered)
+        self.assertIn("Allow", rendered)
+        self.assertIn("443", rendered)
+        for withheld in ("8443", "10.99.88.0/24", "secret-marker", "123"):
+            self.assertNotIn(withheld, rendered)
+        self.assertIn("[sensitive]", rendered)
+        self.assertIn("[unknown until apply]", rendered)
+
+    def test_summary_nested_rules_do_not_publish_arbitrary_strings(self):
+        document = {"resource_changes": [{"address": "azurerm_network_security_group.test", "type": "azurerm_network_security_group", "change": {
+            "actions": ["create"], "after": {"security_rule": [{"name": "secret-marker", "access": "Allow", "protocol": "Tcp", "destination_port_range": "443", "source_address_prefix": "Internet"}]},
+            "after_sensitive": {}}}]}
+        rendered = summary.summary(document)
+        self.assertIn("Internet", rendered)
+        self.assertIn("443", rendered)
+        self.assertNotIn("secret-marker", rendered)
+        document["resource_changes"][0]["change"]["after_sensitive"] = {"security_rule": [{"access": True}]}
+        rendered = summary.summary(document)
+        self.assertNotIn("Internet", rendered)
+        self.assertNotIn("443", rendered)
+
+    def test_summary_nested_network_acls_respect_sensitive_masks(self):
+        document = {"resource_changes": [{"address": "azurerm_key_vault.test", "type": "azurerm_key_vault", "change": {
+            "actions": ["update"], "after": {"purge_protection_enabled": False, "network_acls": [{"default_action": "Allow", "bypass": "AzureServices", "ip_rules": ["secret-marker"]}]},
+            "after_sensitive": {"network_acls": [{"default_action": True}]}}}]}
+        rendered = summary.summary(document)
+        self.assertIn("false", rendered)
+        self.assertIn("AzureServices", rendered)
+        self.assertNotIn("| Allow |", rendered)
+        self.assertNotIn("secret-marker", rendered)
+
+    def test_runner_classifies_failure_and_removes_sensitive_logs(self):
+        log = Path(self.case.name) / "raw.log"
+        output = io.StringIO()
+        with redirect_stdout(output):
+            status = runner.run([sys.executable, "-c", "import sys; print('AuthorizationFailed secret-marker'); sys.exit(1)"], log)
+        self.assertEqual(status, 1)
+        self.assertIn("authorization", output.getvalue())
+        self.assertNotIn("secret-marker", output.getvalue())
+        self.assertFalse(log.exists())
+
+    def test_runner_success_also_withholds_output_and_removes_logs(self):
+        log = Path(self.case.name) / "raw.log"
+        output = io.StringIO()
+        with redirect_stdout(output):
+            status = runner.run([sys.executable, "-c", "print('secret-marker')"], log)
+        self.assertEqual(status, 0)
+        self.assertNotIn("secret-marker", output.getvalue())
+        self.assertFalse(log.exists())
+
+    def test_workflow_lint_adapter_rejects_invalid_queue_combinations(self):
+        valid = "concurrency:\n  group: terraform-deploy\n  cancel-in-progress: false\n  queue: max\njobs:\n  example: {}\n"
+        adapted = workflows.lint_source(valid)
+        self.assertEqual(len(valid.splitlines()), len(adapted.splitlines()))
+        self.assertIn("jobs:\n  example: {}", adapted)
+        for invalid in (valid.replace("cancel-in-progress: false", "cancel-in-progress: true"), valid.replace("  queue: max", "  queue: max\n  queue: max")):
+            with self.subTest(invalid=invalid), self.assertRaises(ValueError):
+                workflows.lint_source(invalid)
+        unsupported = valid.replace("queue: max", "queue: unsupported")
+        self.assertIn("queue: unsupported", workflows.lint_source(unsupported))
 
     def test_summary_omits_secrets_even_if_not_marked_sensitive(self):
         document = {"variables": {"password": {"value": "secret-marker"}},

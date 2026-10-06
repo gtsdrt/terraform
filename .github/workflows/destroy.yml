@@ -14,9 +14,13 @@ on:
         options: [all, azlandingzone, network]
         default: all
       confirm:
-        description: "精确输入 DESTROY；Key Vault 和日志仅软删除，不永久清除"
+        description: "精确输入 DESTROY；审批前生成删除清单，诊断存储也会被删除"
         type: string
         required: true
+
+defaults:
+  run:
+    shell: bash
 
 permissions:
   contents: read
@@ -24,9 +28,72 @@ permissions:
 concurrency:
   group: terraform-deploy
   cancel-in-progress: false
+  queue: max
+
+env:
+  ARM_SUBSCRIPTION_ID: ${{ vars.TERRAFORM_AZURE_SUBSCRIPTION_ID }}
+  ARM_TENANT_ID: ${{ vars.TERRAFORM_AZURE_TENANT_ID }}
+  ARM_USE_OIDC: true
+  ARM_USE_CLI: false
+  TF_IN_AUTOMATION: true
+  DESTROY_CONFIRM: ${{ inputs.confirm }}
+  DESTROY_ENV: ${{ inputs.env }}
+  DESTROY_SCOPE: ${{ inputs.scope }}
 
 jobs:
+  plan:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      ARM_CLIENT_ID: ${{ vars.TERRAFORM_PLAN_AZURE_CLIENT_ID }}
+      PLAN_CLIENT_ID: ${{ vars.TERRAFORM_PLAN_AZURE_CLIENT_ID }}
+      TEST_CLIENT_ID: ${{ vars.TERRAFORM_TEST_AZURE_CLIENT_ID }}
+      PROD_CLIENT_ID: ${{ vars.TERRAFORM_PROD_AZURE_CLIENT_ID }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Validate literal inputs and separate identities
+        run: |
+          bash .github/scripts/check_destroy_inputs.sh
+          python3 .github/scripts/check_identities.py
+      - uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd # v3
+        with:
+          terraform_version: "1.9.8"
+          terraform_wrapper: false
+      - name: Terraform init
+        run: python3 .github/scripts/tf_run.py --log "$RUNNER_TEMP/init.log" -- terraform -chdir="$DESTROY_ENV" init -input=false -lockfile=readonly
+      - name: Generate the exact destroy plan with the read-only identity
+        run: |
+          targets=()
+          if [[ "$DESTROY_ENV" == tf && "$DESTROY_SCOPE" != all ]]; then
+            targets=("-target=module.$DESTROY_SCOPE")
+          fi
+          python3 .github/scripts/tf_run.py --log "$RUNNER_TEMP/destroy-plan.log" -- terraform -chdir="$DESTROY_ENV" plan -destroy -lock=false "${targets[@]}" -input=false -no-color -var-file=terraform.tfvars -out=destroy.tfplan
+      - name: Publish deletion list before approval
+        run: |
+          echo '## Destroy request' >> "$GITHUB_STEP_SUMMARY"
+          echo "Environment: $DESTROY_ENV; scope: $DESTROY_SCOPE" >> "$GITHUB_STEP_SUMMARY"
+          echo 'Resource groups remain. Destroying the Landing Zone also deletes diagnostic storage and archived logs.' >> "$GITHUB_STEP_SUMMARY"
+          terraform -chdir="$DESTROY_ENV" show -json destroy.tfplan | python3 .github/scripts/plan_summary.py >> "$GITHUB_STEP_SUMMARY"
+      - name: Encrypt and bind the destroy plan to its scope
+        run: python3 .github/scripts/plan_artifact.py seal --input "$DESTROY_ENV/destroy.tfplan" --certificate ".github/plan-keys/$DESTROY_ENV.pem" --output "$DESTROY_ENV/destroy.cms" --environment "$DESTROY_ENV" --purpose destroy --scope "$DESTROY_SCOPE" >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: encrypted-destroy-plan
+          path: ${{ inputs.env }}/destroy.cms
+          retention-days: 3
+          if-no-files-found: error
+      - name: Remove plaintext plan
+        if: always()
+        run: rm -f "$DESTROY_ENV/destroy.tfplan" "$RUNNER_TEMP/init.log" "$RUNNER_TEMP/destroy-plan.log"
+
   destroy:
+    needs: plan
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-24.04
     timeout-minutes: 30
@@ -36,14 +103,6 @@ jobs:
       id-token: write
     env:
       ARM_CLIENT_ID: ${{ inputs.env == 'tf' && vars.TERRAFORM_PROD_AZURE_CLIENT_ID || vars.TERRAFORM_TEST_AZURE_CLIENT_ID }}
-      ARM_SUBSCRIPTION_ID: ${{ vars.TERRAFORM_AZURE_SUBSCRIPTION_ID }}
-      ARM_TENANT_ID: ${{ vars.TERRAFORM_AZURE_TENANT_ID }}
-      ARM_USE_OIDC: true
-      ARM_USE_CLI: false
-      TF_IN_AUTOMATION: true
-      DESTROY_CONFIRM: ${{ inputs.confirm }}
-      DESTROY_ENV: ${{ inputs.env }}
-      DESTROY_SCOPE: ${{ inputs.scope }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
@@ -54,19 +113,18 @@ jobs:
         with:
           terraform_version: "1.9.8"
           terraform_wrapper: false
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: encrypted-destroy-plan
+          path: ${{ inputs.env }}
       - name: Terraform init
-        run: terraform -chdir="$DESTROY_ENV" init -input=false -lockfile=readonly
-      - name: Destroy managed resources without purging retained data
-        run: |
-          targets=()
-          if [[ "$DESTROY_ENV" == tf && "$DESTROY_SCOPE" != all ]]; then
-            targets=("-target=module.$DESTROY_SCOPE")
-          fi
-          if ! terraform -chdir="$DESTROY_ENV" destroy "${targets[@]}" -input=false -lock-timeout=5m -no-color -auto-approve -var-file=terraform.tfvars > "$RUNNER_TEMP/destroy.log" 2>&1; then
-            echo '::error::Terraform destroy failed; raw logs are not published.'
-            exit 1
-          fi
-          echo 'Destroy completed. Resource groups remain; Key Vault and Log Analytics are not purged.' >> "$GITHUB_STEP_SUMMARY"
-      - name: Remove raw logs
+        run: python3 .github/scripts/tf_run.py --log "$RUNNER_TEMP/init.log" -- terraform -chdir="$DESTROY_ENV" init -input=false -lockfile=readonly
+      - name: Verify context, scope and expiry after approval
+        env:
+          TF_PLAN_PRIVATE_KEY: ${{ secrets.TF_PLAN_PRIVATE_KEY }}
+        run: python3 .github/scripts/plan_artifact.py unseal --input "$DESTROY_ENV/destroy.cms" --certificate ".github/plan-keys/$DESTROY_ENV.pem" --output "$DESTROY_ENV/destroy.tfplan" --environment "$DESTROY_ENV" --purpose destroy --scope "$DESTROY_SCOPE"
+      - name: Apply exactly the reviewed destroy plan
+        run: python3 .github/scripts/tf_run.py --log "$RUNNER_TEMP/destroy.log" -- terraform -chdir="$DESTROY_ENV" apply -input=false -lock-timeout=5m -no-color destroy.tfplan
+      - name: Remove plaintext plan
         if: always()
-        run: rm -f "$RUNNER_TEMP/destroy.log"
+        run: rm -f "$DESTROY_ENV/destroy.tfplan" "$RUNNER_TEMP/init.log" "$RUNNER_TEMP/destroy.log"
