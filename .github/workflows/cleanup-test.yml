@@ -1,0 +1,72 @@
+name: Terraform Test Recovery
+
+on:
+  workflow_run:
+    workflows: [Terraform Deploy]
+    types: [completed]
+    branches: [main]
+  schedule:
+    - cron: '17 */6 * * *'
+  workflow_dispatch:
+
+defaults:
+  run:
+    shell: bash
+
+permissions:
+  contents: read
+  actions: read
+
+# Recovery waits for any active deployment/destroy, including its approval gate.
+concurrency:
+  group: terraform-deploy
+  cancel-in-progress: false
+  queue: max
+
+jobs:
+  cleanup:
+    if: github.ref == 'refs/heads/main' && (github.event_name != 'workflow_run' || github.event.workflow_run.head_repository.full_name == github.repository)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    environment: test
+    permissions:
+      contents: read
+      actions: read
+      id-token: write
+    env:
+      ARM_CLIENT_ID: ${{ vars.TERRAFORM_TEST_AZURE_CLIENT_ID }}
+      ARM_SUBSCRIPTION_ID: ${{ vars.TERRAFORM_AZURE_SUBSCRIPTION_ID }}
+      ARM_TENANT_ID: ${{ vars.TERRAFORM_AZURE_TENANT_ID }}
+      ARM_USE_OIDC: true
+      ARM_USE_CLI: false
+      TF_IN_AUTOMATION: true
+    steps:
+      - name: Check whether the completed run attempted test deployment
+        id: recover
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_RUN_ID: ${{ github.event.workflow_run.id }}
+        run: |
+          recover=true
+          if [[ "$GITHUB_EVENT_NAME" == workflow_run ]]; then
+            recover=$(gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/actions/runs/$SOURCE_RUN_ID/jobs" --jq '[.[].jobs[] | select(.name == "deploy-test" and (.conclusion == "success" or .conclusion == "failure" or .conclusion == "cancelled"))] | length > 0')
+          fi
+          echo "needed=$recover" >> "$GITHUB_OUTPUT"
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        if: steps.recover.outputs.needed == 'true'
+        with:
+          ref: main
+          persist-credentials: false
+      - uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd # v3
+        if: steps.recover.outputs.needed == 'true'
+        with:
+          terraform_version: "1.9.8"
+          terraform_wrapper: false
+      - name: Clean only the ephemeral test state and retain its resource group
+        if: steps.recover.outputs.needed == 'true'
+        run: |
+          python3 .github/scripts/tf_run.py --log "$RUNNER_TEMP/init.log" -- terraform -chdir=tf-test init -input=false -lockfile=readonly
+          python3 .github/scripts/tf_run.py --log "$RUNNER_TEMP/recovery.log" -- terraform -chdir=tf-test destroy -input=false -lock-timeout=5m -no-color -auto-approve -var-file=terraform.tfvars
+      - name: Remove temporary raw logs
+        if: always()
+        run: rm -f "$RUNNER_TEMP/init.log" "$RUNNER_TEMP/recovery.log"

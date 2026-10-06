@@ -16,12 +16,17 @@ on:
         options: [full, plan-only]
         default: full
 
+defaults:
+  run:
+    shell: bash
+
 permissions:
   contents: read
 
 concurrency:
-  group: terraform-deploy
+  group: ${{ inputs.mode == 'plan-only' && 'terraform-preview' || 'terraform-deploy' }}
   cancel-in-progress: false
+  queue: max
 
 env:
   ARM_SUBSCRIPTION_ID: ${{ vars.TERRAFORM_AZURE_SUBSCRIPTION_ID }}
@@ -62,30 +67,26 @@ jobs:
           terraform_version: "1.9.8"
           terraform_wrapper: false
       - name: Terraform init
-        run: terraform init -input=false -lockfile=readonly
+        run: python3 ../.github/scripts/tf_run.py --log "$RUNNER_TEMP/init.log" -- terraform init -input=false -lockfile=readonly
       - name: Terraform plan with a read-only state identity
         # Apply is serialized and rejects stale plans. Reader cannot acquire a lease.
-        run: |
-          if ! terraform plan -lock=false -no-color -input=false -var-file=terraform.tfvars -out=tfplan > "$RUNNER_TEMP/plan-${{ matrix.dir }}.log" 2>&1; then
-            echo '::error::Terraform plan failed. Reproduce with an authorized local identity; raw logs are not published.'
-            exit 1
-          fi
-      - name: Publish actions only
+        run: python3 ../.github/scripts/tf_run.py --log "$RUNNER_TEMP/plan.log" -- terraform plan -lock=false -no-color -input=false -var-file=terraform.tfvars -out=tfplan
+      - name: Publish actions and allowlisted security settings
         run: terraform show -json tfplan | python3 ../.github/scripts/plan_summary.py >> "$GITHUB_STEP_SUMMARY"
       - name: Encrypt the exact plan using the environment public certificate
         if: inputs.mode != 'plan-only'
-        run: python3 ../.github/scripts/plan_artifact.py seal --input tfplan --certificate ../.github/plan-keys/${{ matrix.dir }}.pem --output tfplan.cms --environment ${{ matrix.dir }}
+        run: python3 ../.github/scripts/plan_artifact.py seal --input tfplan --certificate ../.github/plan-keys/${{ matrix.dir }}.pem --output tfplan.cms --environment ${{ matrix.dir }} >> "$GITHUB_STEP_SUMMARY"
       - name: Upload authenticated ciphertext only
         if: inputs.mode != 'plan-only'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: encrypted-tfplan-${{ matrix.dir }}
           path: ${{ matrix.dir }}/tfplan.cms
-          retention-days: 1
+          retention-days: 3
           if-no-files-found: error
       - name: Remove plaintext plan and logs
         if: always()
-        run: rm -f tfplan "$RUNNER_TEMP/plan-${{ matrix.dir }}.log"
+        run: rm -f tfplan "$RUNNER_TEMP/init.log" "$RUNNER_TEMP/plan.log"
 
   deploy-test:
     needs: plan
@@ -114,24 +115,19 @@ jobs:
           name: encrypted-tfplan-tf-test
           path: tf-test
       - name: Terraform init
-        run: terraform init -input=false -lockfile=readonly
+        run: python3 ../.github/scripts/tf_run.py --log "$RUNNER_TEMP/init.log" -- terraform init -input=false -lockfile=readonly
       - name: Decrypt and verify plan context after environment checks
         env:
           TF_PLAN_PRIVATE_KEY: ${{ secrets.TF_PLAN_PRIVATE_KEY }}
         run: python3 ../.github/scripts/plan_artifact.py unseal --input tfplan.cms --certificate ../.github/plan-keys/tf-test.pem --output tfplan --environment tf-test
       - name: Apply the exact plan
-        run: |
-          if ! terraform apply -input=false -lock-timeout=5m -no-color tfplan > "$RUNNER_TEMP/apply-test.log" 2>&1; then
-            echo '::error::Terraform test apply failed; raw logs are not published.'
-            exit 1
-          fi
-          echo 'Terraform test apply completed.'
+        run: python3 ../.github/scripts/tf_run.py --log "$RUNNER_TEMP/apply-test.log" -- terraform apply -input=false -lock-timeout=5m -no-color tfplan
       - name: Remove plaintext plan and logs
         if: always()
-        run: rm -f tfplan "$RUNNER_TEMP/apply-test.log"
+        run: rm -f tfplan "$RUNNER_TEMP/init.log" "$RUNNER_TEMP/apply-test.log"
 
   deploy-prod:
-    needs: deploy-test
+    needs: [deploy-test, cleanup-test]
     if: github.ref == 'refs/heads/main' && inputs.mode != 'plan-only'
     runs-on: ubuntu-24.04
     timeout-minutes: 30
@@ -157,25 +153,20 @@ jobs:
           name: encrypted-tfplan-tf
           path: tf
       - name: Terraform init
-        run: terraform init -input=false -lockfile=readonly
+        run: python3 ../.github/scripts/tf_run.py --log "$RUNNER_TEMP/init.log" -- terraform init -input=false -lockfile=readonly
       - name: Decrypt and verify plan context after environment checks
         env:
           TF_PLAN_PRIVATE_KEY: ${{ secrets.TF_PLAN_PRIVATE_KEY }}
         run: python3 ../.github/scripts/plan_artifact.py unseal --input tfplan.cms --certificate ../.github/plan-keys/tf.pem --output tfplan --environment tf
       - name: Apply the exact plan
-        run: |
-          if ! terraform apply -input=false -lock-timeout=5m -no-color tfplan > "$RUNNER_TEMP/apply-prod.log" 2>&1; then
-            echo '::error::Terraform prod apply failed; raw logs are not published.'
-            exit 1
-          fi
-          echo 'Terraform prod apply completed.'
+        run: python3 ../.github/scripts/tf_run.py --log "$RUNNER_TEMP/apply-prod.log" -- terraform apply -input=false -lock-timeout=5m -no-color tfplan
       - name: Remove plaintext plan and logs
         if: always()
-        run: rm -f tfplan "$RUNNER_TEMP/apply-prod.log"
+        run: rm -f tfplan "$RUNNER_TEMP/init.log" "$RUNNER_TEMP/apply-prod.log"
 
   cleanup-test:
-    needs: deploy-prod
-    if: always() && github.ref == 'refs/heads/main' && inputs.mode != 'plan-only' && needs.deploy-prod.result == 'success'
+    needs: deploy-test
+    if: always() && !cancelled() && github.ref == 'refs/heads/main' && inputs.mode != 'plan-only' && (needs.deploy-test.result == 'success' || needs.deploy-test.result == 'failure')
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     environment: test
@@ -196,13 +187,9 @@ jobs:
           terraform_version: "1.9.8"
           terraform_wrapper: false
       - name: Terraform init
-        run: terraform init -input=false -lockfile=readonly
+        run: python3 ../.github/scripts/tf_run.py --log "$RUNNER_TEMP/init.log" -- terraform init -input=false -lockfile=readonly
       - name: Destroy test resources and retain the permission boundary resource group
-        run: |
-          if ! terraform destroy -input=false -lock-timeout=5m -no-color -auto-approve -var-file=terraform.tfvars > "$RUNNER_TEMP/cleanup-test.log" 2>&1; then
-            echo '::error::Terraform test cleanup failed; raw logs are not published.'
-            exit 1
-          fi
+        run: python3 ../.github/scripts/tf_run.py --log "$RUNNER_TEMP/cleanup-test.log" -- terraform destroy -input=false -lock-timeout=5m -no-color -auto-approve -var-file=terraform.tfvars
       - name: Remove raw logs
         if: always()
-        run: rm -f "$RUNNER_TEMP/cleanup-test.log"
+        run: rm -f "$RUNNER_TEMP/init.log" "$RUNNER_TEMP/cleanup-test.log"

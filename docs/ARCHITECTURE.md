@@ -24,17 +24,23 @@ PR 检查完全离线于 Azure，不下发 secrets，不签发 OIDC；fork PR �
 原 tfstate 容器保留为迁移备份，新 tfstate-prod 和 tfstate-test 都禁止匿名访问。
 backend 显式使用 Microsoft Entra ID；state 存储账户禁用 Shared Key。
 apply 的两个身份分别只能操作一个容器，因此测试身份不能修改生产 state。
-计划在仓库级 concurrency 内计算且不申请 lease，apply 获取 lease 并拒绝 serial 已变化的旧计划。
+可执行计划在共享写入队列内计算且不申请 lease，apply 获取 lease 并拒绝 serial 已变化的旧计划。
+只读 plan-only 使用独立队列，可能与写入并发，因此摘要只供参考。写入队列使用 queue:max，最多保留 100 个等待请求。
 人工操作也必须避免与 Actions 写入并发。
 
 公开 plan artifact 仅包含 CMS AuthEnvelopedData，AES-256-GCM 提供加密和完整性验证，RSA 封装会话密钥。
-内部文档绑定 repository、commit SHA、GitHub run ID 和 Terraform 环境，解密验证后才创建 mode 0600 的 plan 文件。
+内部文档绑定 repository、commit SHA、GitHub run ID、Terraform 环境、deploy/destroy 目的和销毁范围。
+版本 2 文档同时绑定生成/到期时间，24 小时后拒绝 apply；密文保留 3 天。解密、上下文、时效和摘要验证全部通过后才创建 mode 0600 的 plan 文件。
 两个环境使用不同私钥，生产私钥仅存在 production environment 的 secret。
 公钥证书有效期五年；轮换时暂停运行，生成新的证书与环境私钥，同时提交新证书，并丢弃旧运行的计划。
 保护环境的访问控制及主分支审查同样保护私钥；获准在生产 job 中运行恶意代码仍能窃取它。
 
-job summary 仅展示资源地址与动作。即使属性未标记 sensitive，也不会被摘要发布。
-原始 plan/apply/destroy 输出不进入公开 Actions 日志；runner 临时文件在 always 步骤清理。
+job summary 展示资源地址、动作及有限的安全设置允许列表；允许列表接受固定枚举、布尔值和有界数字。
+具体 IP、任意字符串、ID、变量、输出、标签及 sensitive/unknown 值仍隐藏。嵌套 NSG 规则和网络 ACL 也检查敏感标记。
+原始 Terraform 输出不进入公开 Actions 日志；统一执行器仅输出固定错误类别，并删除临时日志，always 步骤兜底。
+销毁分为 plan 与 apply 两个 job：只读身份先生成摘要与密文，再由生产审批释放生产身份与私钥，apply 仅接受该计划。
+测试部署后立即清理，测试和清理均成功才进入生产审批。取消后的恢复和每 6 小时清理只操作 test state，
+从 main checkout，拒绝其他仓库触发事件，并参与共享写入队列；审批等待仍会阻塞其他写入。
 
 ## 资源生命周期
 
@@ -45,7 +51,8 @@ HTTPS 入站收窄到 VirtualNetwork；未来公网服务需要明确审查允�
 诊断存储网络默认 Deny，仅绕过受信任 Azure 服务。Terraform provider 不访问受限存储的数据面。
 
 生产 Key Vault 默认拒绝网络入站、使用 RBAC、开启 purge protection；Terraform provider 也明确禁止 destroy 时 purge。
-Log Analytics 保留软删除。destroy workflow 取消恢复后永久删除以及资源组删除步骤。
+Log Analytics 保留软删除。destroy workflow 不永久 purge，也不删除资源组。
+诊断存储账户仍属于 Landing Zone 销毁范围，其归档日志不会得到上述软删除保护；摘要明确提示此风险。
 这会改变原来的“销毁后立刻同名重建”行为：需要管理员恢复软删除的 Key Vault/工作区，再导入 state 或重新 plan。
 部署身份没有订阅级 deleted-vault 权限，恢复由管理员单独完成；不要为自动恢复扩大部署身份权限。
 
