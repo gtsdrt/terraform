@@ -1,6 +1,7 @@
 # Terraform on GitHub Actions
 
 Azure 网络与 Landing Zone，使用 GitHub OIDC、生产环境审批和加密计划产物。
+完整操作步骤见 [GitHub Actions 部署与审批说明](docs/DEPLOYMENT_GUIDE.md)，包括 PR 合入、生产审批、销毁和故障恢复。
 详细权限模型和迁移步骤见 [安全架构](docs/ARCHITECTURE.md)。
 
 ## 环境与资源
