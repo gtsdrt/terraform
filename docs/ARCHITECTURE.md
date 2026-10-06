@@ -1,5 +1,7 @@
 # 安全架构与运维边界
 
+部署、审批、销毁和故障处理的实际操作步骤见 [GitHub Actions 部署与审批说明](DEPLOYMENT_GUIDE.md)。
+
 ## 认证和授权
 
 每个 GitHub OIDC subject 绑定独立 Azure service principal，而非同一身份的多个 federated credentials。
