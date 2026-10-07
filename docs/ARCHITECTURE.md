@@ -27,6 +27,28 @@ AzureRM 创建 Key Vault 时查询同名 deleted vault，生产因此得到 `Mic
 
 plan 因刷新计算属性会读取诊断密钥，仍属于敏感数据身份。production 环境审批保护生产身份及私钥，main Ruleset 保护工作流代码，二者必须同时保持。当前 production 由 `atea-shuangliang` 审批、禁止自行审批和管理员绕过，两个环境仅允许 main。
 
+### 定位服务主体与 RBAC 成员
+
+`gtsdrt-terraform-plan/test/prod` 是 Azure 应用的服务主体，供 GitHub Actions 使用。GitHub 的 `gtsdrt` 和 `atea-shuangliang` 是提交、发起运行及审批账号；Azure 资源权限分配给下表中的服务主体。
+
+| Azure 身份 | Application / Client ID | Service Principal Object ID |
+|---|---|---|
+| `gtsdrt-terraform-plan` | `dd55a47c-10f7-494f-8ffd-b7905fe1d307` | `75231122-8601-45c7-90d2-8c0955d616eb` |
+| `gtsdrt-terraform-test` | `52189b8e-a0c9-47b6-84c3-f3f86b3bd047` | `335dd3bc-d604-408b-983e-55a81f558482` |
+| `gtsdrt-terraform-prod` | `a3d03a7c-0c1f-44bf-9ed3-4282114abe9b` | `20b490df-c599-472b-841d-5f450ece0d21` |
+
+以上为 2026-10-06 核对的身份元数据，不是登录密钥。Client ID 配置在 GitHub repository variables；Azure RBAC 的 principal_id 使用 Service Principal Object ID。App registrations 的 Object ID 标识应用注册对象，与 Enterprise applications 中服务主体的 Object ID 不同。[Microsoft 对应用对象与服务主体的说明](https://learn.microsoft.com/en-us/entra/identity-platform/app-objects-and-service-principals)
+
+Portal 中进入 **Microsoft Entra ID → Enterprise applications**，按名称定位服务主体。资源组授权入口是 **Access control (IAM) → Add → Add role assignment → Members → User, group, or service principal → Select members**；搜索 `gtsdrt-terraform-test` 等显示名称并选择。现有 Role assignments 列表的搜索只筛选已经授权的成员。托管身份选择入口不用于这三个应用。[Microsoft 的 RBAC 操作步骤](https://learn.microsoft.com/en-us/azure/role-based-access-control/role-assignments-portal)
+
+| 资源组范围 | 接收权限的服务主体 | 角色 |
+|---|---|---|
+| `terraform-test-v2` | `gtsdrt-terraform-test` | Contributor |
+| `terraform-prod-v2`、`azlandingzone-v2` | `gtsdrt-terraform-prod` | Contributor |
+| 上述三个组 | `gtsdrt-terraform-plan` | foundation 定义的 `gtsdrt Terraform v2 Plan Reader <subscription_id>` |
+
+已有普通 Reader 允许读取资源，但不包含 Storage listKeys/Log Analytics sharedKeys；foundation 的自定义 Plan Reader 包含这些刷新操作。test/prod 的 Contributor 授权不会改变 plan 身份的权限。foundation 同时管理生产的订阅范围 deleted-vault 元数据读取授权；三个 state 容器的数据权限由初始化脚本单独准备。
+
 ## 从零准备与 state
 
 backend 资源组 `Terraform`、存储账户 `gtsdrtterraform2` 是现有管理基础设施，不放进业务 state。`prepare_fresh_start.py` 在核对订阅、租户、三个 Client ID 与 Object ID 后生成排除在 Git 外的本地输入。如果 v2 组和对应 Contributor 授权已存在，还生成本地 import 块，保留现有组区域；仅导入确定匹配的组、身份、角色和 scope，普通 Reader 或其他身份的授权保持原状。import 在管理员审查后的 foundation plan/apply 中执行。

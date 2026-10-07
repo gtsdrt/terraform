@@ -2,7 +2,17 @@
 
 本文说明 `gtsdrt/terraform` 从代码提交、PR 审查到 Azure 部署、销毁及测试恢复的完整流程，供提交者、审查者和部署审批人使用。
 
-配置核对日期：2026-10-06；本文随 v2 从零重建配置更新。首次部署必须先完成 [Terraform foundation 初始化](FRESH_START.md)，创建资源组和授权，再进入业务部署。工作流和仓库设置后续可能调整，操作前以当前运行及环境设置为准。权限设计与历史初始化另见[安全架构](ARCHITECTURE.md)及[README](../README.md#从零初始化)。
+配置核对日期：2026-10-06；v2 初始化及首次 full 部署已经完成，运行与资源验收见[部署记录](DEPLOYMENT_RECORD_2026-10-06.md)。日常操作按本指南运行 main 的 `plan-only → full`。首次建立环境时先完成 [Terraform foundation 初始化](FRESH_START.md)，创建或接管资源组和授权。工作流和仓库设置后续可能调整，操作前以当前运行及环境设置为准。权限设计另见[安全架构](ARCHITECTURE.md)及[README](../README.md#从零初始化)。
+
+## 日常部署操作
+
+1. 用 `gtsdrt` 登录，确认待部署变更已合入 main、PR 检查通过，且没有尚未完成的完整部署或销毁。
+2. 进入 **Actions → Terraform Deploy → Run workflow**，选择 **main / plan-only**。查看两个 plan 的变更摘要。
+3. 预览符合预期后，以 `gtsdrt` 创建 **main / full** 运行。检查该 full 运行中的新摘要；它会重新生成准确计划。
+4. 等待两个 plan、test apply 和 test cleanup 成功。以 `atea-shuangliang` 打开同一运行，选择 **Review deployments → production → Approve and deploy**。
+5. 等待 `deploy-prod` 和整条运行显示 success，按第 12 节验收。test 组保留、组内临时资源为空是正常结果。
+
+工作流若显示 Disabled，按下方启用步骤恢复。foundation 已完成后，日常部署继续使用现有资源组和 state；初始化脚本不属于每次 full 的执行步骤。
 
 ## 1. 先区分两种审批
 
@@ -48,6 +58,20 @@ GitHub 通过 OIDC 换取 Azure 短期身份，不在工作流中使用长期 Az
 
 plan 身份包含刷新 Storage 和 Log Analytics 所需的密钥读取操作，所以“只读”仍可能读取敏感信息。完整计划和原始 Terraform 输出不能公开发布。
 
+### 工作流 Disabled 时如何启用
+
+Disabled 是仓库工作流状态。合入代码后，之前手动停用的工作流仍需启用。在 **Actions → Terraform Deploy** 页面点击 **Enable workflow**；对 Terraform Destroy 和 Terraform Test Recovery 也分别启用。
+
+有仓库 Actions 管理权限的账号也可以执行：
+
+```bash
+gh workflow enable deploy.yml --repo gtsdrt/terraform
+gh workflow enable destroy.yml --repo gtsdrt/terraform
+gh workflow enable cleanup-test.yml --repo gtsdrt/terraform
+```
+
+2026-10-06 核对时三个工作流均为 active。启用后新建 main 的运行；旧失败运行仍引用旧提交。
+
 ## 3. 整体流程图
 
 ```mermaid
@@ -78,7 +102,7 @@ flowchart TD
 
 ## 4. 提交、审查和合入 PR
 
-v2 首次上线时，先按 [FRESH_START](FRESH_START.md) 暂停写入工作流、从修复分支准备 backend 并执行 foundation；完成后再合入并启用正常部署。
+当前 v2 已完成首次初始化。新环境上线或维护 foundation 时，先按 [FRESH_START](FRESH_START.md) 暂停写入工作流、从最新 main 准备 backend 并执行 foundation；正常业务变更遵循下面的 PR 流程。
 
 1. 在功能分支修改代码并创建面向 main 的 PR。
 2. 等待三个必需检查通过：`Terraform Validate (tf)`、`Terraform Validate (tf-test)`、`Security Checks`。新增 `Terraform Validate (tf-foundation)`，foundation 的 mock 权限测试也纳入必需的 Security Checks。
@@ -232,6 +256,10 @@ gh workflow run destroy.yml --repo gtsdrt/terraform --ref main -f env=tf-test -f
 | `state-lock` | 查找仍在运行的写入执行者或人工操作；不要强制解锁活跃 lease |
 | `stale-plan` | state 已变化或计划与 state 不匹配；创建新运行，重新审查 |
 | `authorization` | 核对 OIDC subject、Client ID、环境分支限制、资源组和容器 RBAC；注意权限传播时间 |
+| 已给 test/prod Contributor，plan 仍报 authorization | plan job 使用 `gtsdrt-terraform-plan`；它也需要目标组的自定义 Plan Reader。检查实际运行提交是否仍引用旧组名，以及 foundation 是否已完成 |
+| IAM 搜索不到 App registrations 的 Object ID | 在 Add role assignment 的 Members 中选择 User, group, or service principal，按应用名称搜索；授权对象是 Enterprise applications 中的服务主体，详情见[身份说明](ARCHITECTURE.md#定位服务主体与-rbac-成员) |
+| foundation 导入 Contributor 后报 doesn't support update | 使用 PR #16 已合入的 main；省略 skip_service_principal_aad_check、保留 principal_type 后重新生成计划。已创建或导入的对象保持现有 state，旧计划不复用 |
+| Terraform Deploy 显示 Disabled | Actions 页面点击 Enable workflow，或执行本指南的 gh workflow enable 命令，再新建 main 运行 |
 | `registration` | provider 设置禁止自动注册；由管理员检查所需 Azure 资源提供程序是否已注册 |
 | `quota` / `name-conflict` / `network` | 这些是日志匹配出的分类线索；使用有权限的身份在受限位置确认实际原因 |
 
@@ -254,7 +282,7 @@ az resource list --resource-group terraform-test-v2 --query '[].{name:name,type:
 
 Azure CLI 执行前确认当前订阅与仓库变量 `TERRAFORM_AZURE_SUBSCRIPTION_ID` 一致。test 资源组本身应保留，不以“资源组仍存在”判断清理失败。
 
-旧 v1 版本的[生产部署运行 37446159746](https://github.com/gtsdrt/terraform/actions/runs/37446159746) 已成功完成，可作为查看阶段顺序的历史示例；后续操作使用自己的当前运行。
+v2 的[只读预览 37519443309](https://github.com/gtsdrt/terraform/actions/runs/37519443309)与[完整部署 37519657614](https://github.com/gtsdrt/terraform/actions/runs/37519657614)均已成功，提交为 `1e7cf74f399ef1c381c17fdb87f6e769115f38cb`。实际区域、阶段结果及验收边界见[部署记录](DEPLOYMENT_RECORD_2026-10-06.md)；后续操作以自己的当前运行为准。
 
 ## 13. 配置与维护入口
 
@@ -262,6 +290,6 @@ Azure CLI 执行前确认当前订阅与仓库变量 `TERRAFORM_AZURE_SUBSCRIPTI
 - 环境审批与分支：Settings → Environments → production / test。修改审批人会改变生产授权边界，应由管理员维护。
 - 加密私钥：各 environment 的 `TF_PLAN_PRIVATE_KEY`。公钥与私钥需成对轮换，不把私钥提交到仓库。
 - main 保护：Settings → Rules → Rulesets → main。必需检查和有效批准必须满足，当前没有 bypass actor。
-- 状态迁移、身份初始化和证书轮换：[安全架构](ARCHITECTURE.md)与 [bootstrap_security.py](../scripts/bootstrap_security.py)。
+- v2 backend、组与授权初始化：[FRESH_START](FRESH_START.md)与 [prepare_fresh_start.py](../scripts/prepare_fresh_start.py)。历史 state 迁移及旧身份/证书工具另见 [bootstrap_security.py](../scripts/bootstrap_security.py)。
 
 GitHub 按钮、账号分工、环境保护和工作流实现发生变化时，应同步更新本指南。说明文档仅记录当前能力，不能替代 Landing Zone 的治理、网络最小权限、日志保护或业务集成验证。

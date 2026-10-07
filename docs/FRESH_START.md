@@ -2,6 +2,8 @@
 
 本方案用于原业务资源已经丢失、选择全新重建的场景。v2 使用新资源组、新业务资源名称和新 state key，不覆盖旧 state，不尝试恢复或 purge 旧 Key Vault/日志资源。
 
+2026-10-06 已完成此次 v2 初始化及完整部署，代码通过 [PR #16](https://github.com/gtsdrt/terraform/pull/16) 合入 main。结果见[部署记录](DEPLOYMENT_RECORD_2026-10-06.md)。日常更新按[部署指南](DEPLOYMENT_GUIDE.md)运行 main 的 `plan-only → full`；本文保留管理员初始化和接管已有基础资源的步骤。再次建立全新一代环境时，先协调新的 namespace 和 state key，见第 6 节。
+
 当前仍存在的 backend 资源组 `Terraform`、存储账户 `gtsdrtterraform2` 和 GitHub 的三个 OIDC 身份继续使用。backend 属于独立的管理基础设施，不能在其承载的业务 state 中自我创建或删除。如果该账户也不存在，必须先另行建立 backend；本初始化脚本会停止，不会自动覆盖或替换它。
 
 ## 1. 分成三个 Terraform 层
@@ -26,14 +28,15 @@ Contributor 可以创建业务资源，但不能创建角色定义或分配 RBAC
 
 ## 3. 准备新配置，暂停旧写入
 
-使用修复分支中的代码完成初始化，再合入 main；否则合入涉及 Terraform/GitHub 配置的变更会自动触发 full，而 foundation 可能尚未就绪。
+初始化代码已在 main。使用最新 main 中的脚本和配置；原 `feat/terraform-fresh-foundation` 分支合入后可删除。先暂停写入工作流并等待现有运行结束，再执行管理员初始化或接管，避免 backend、授权与正在执行的部署并发修改。
 
 在本地使用 Terraform 1.9.8、Azure CLI、GitHub CLI 和 Python 3。GitHub CLI 需要能读取仓库变量、管理工作流；Azure CLI 登录能初始化 foundation 的管理员账号。
 
 ```bash
-# 读取本 PR 的完整配置；这里是功能分支，还不触发云部署。
+# 读取已合入的初始化配置；本地 fetch/pull 不触发 GitHub 部署。
 git fetch origin
-git switch feat/terraform-fresh-foundation
+git switch main
+git pull --ff-only
 
 # 确认 gh 的登录账号。关闭自动/手动写入入口并等待已有运行结束。
 gh auth status
@@ -103,7 +106,7 @@ terraform -chdir=tf-foundation output resource_groups
 
 foundation 的远程 state 由管理员使用，GitHub 的 plan/test/prod 身份不授予该容器的数据权限，因此它们不能改动其中的资源组或授权记录。
 
-如果使用早期版本初始化遇到 Contributor 授权的 `doesn't support update`，原因是导入后的 `skip_service_principal_aad_check` 空值与配置中的 true 产生更新差异，而 AzureRM 4.81 不支持角色分配 update。最新 foundation 省略该可选标志，保留 `principal_type = "ServicePrincipal"`。更新修复分支后重新 plan，核对三个 Contributor 授权为 no-op，再 apply 新计划；已经成功创建或导入的对象继续由现有 state 管理。旧的保存计划仍包含错误更新动作，不能用于这次重试。
+如果使用早期版本初始化遇到 Contributor 授权的 `doesn't support update`，原因是导入后的 `skip_service_principal_aad_check` 空值与配置中的 true 产生更新差异，而 AzureRM 4.81 不支持角色分配 update。最新 foundation 省略该可选标志，保留 `principal_type = "ServicePrincipal"`。更新到最新 main 后重新 plan，核对三个 Contributor 授权为 no-op，再 apply 新计划；已经成功创建或导入的对象继续由现有 state 管理。旧的保存计划仍包含错误更新动作，不能用于这次重试。
 
 ## 6. 新业务名称如何避开软删除
 
@@ -113,9 +116,9 @@ Key Vault 的自动恢复关闭，生产仍保持 purge protection。旧软删�
 
 新 v2 state 不接管旧资源。若发现旧 namespace 仍有活跃资源，应另外盘点其费用和生命周期，不能假定改变 state key 会删除它们。下一次再次重建为 v3 时，应一起调整资源组名、generation、三个 backend key 及初始化脚本的允许列表；不能只改 state key 而继续重复管理同一批活跃资源。
 
-## 7. 合入、启用工作流、预览与部署
+## 7. 启用工作流、预览与部署
 
-foundation 完成后，让审查者批准 PR，由 `gtsdrt` 合入 main，再启用正常工作流：
+foundation 完成且业务配置已在 main 后，启用正常工作流。若之后修改初始化代码，需要先完成 PR 审查及合入；当前 PR #16 已合入。
 
 ```bash
 gh workflow enable deploy.yml --repo gtsdrt/terraform
