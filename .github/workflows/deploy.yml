@@ -72,7 +72,7 @@ jobs:
         # Apply is serialized and rejects stale plans. Reader cannot acquire a lease.
         run: python3 ../.github/scripts/tf_run.py --log "$RUNNER_TEMP/plan.log" -- terraform plan -lock=false -no-color -input=false -var-file=terraform.tfvars -out=tfplan
       - name: Publish actions and allowlisted security settings
-        run: terraform show -json tfplan | python3 ../.github/scripts/plan_summary.py >> "$GITHUB_STEP_SUMMARY"
+        run: terraform show -json tfplan | python3 ../.github/scripts/plan_summary.py --key-vault-recovery "${{ matrix.dir == 'tf' && 'enabled' || 'disabled' }}" >> "$GITHUB_STEP_SUMMARY"
       - name: Encrypt the exact plan using the environment public certificate
         if: inputs.mode != 'plan-only'
         run: python3 ../.github/scripts/plan_artifact.py seal --input tfplan --certificate ../.github/plan-keys/${{ matrix.dir }}.pem --output tfplan.cms --environment ${{ matrix.dir }} >> "$GITHUB_STEP_SUMMARY"

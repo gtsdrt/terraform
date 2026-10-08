@@ -8,6 +8,7 @@ Azure 网络与 Landing Zone 的 v2 从零重建配置。资源组和限定授�
 - 日常操作：[部署、审批、销毁与恢复](docs/DEPLOYMENT_GUIDE.md)
 - 权限边界：[安全架构](docs/ARCHITECTURE.md)
 - 本次部署：[v2 验证记录](docs/DEPLOYMENT_RECORD_2026-10-06.md)
+- 销毁后重建：[2026-10-08 Key Vault 软删除问题与处理](docs/DEPLOYMENT_INCIDENT_2026-10-08.md)
 
 ## 层与资源
 
@@ -17,7 +18,7 @@ Azure 网络与 Landing Zone 的 v2 从零重建配置。资源组和限定授�
 | prod | `tf/` | `terraform-prod-v2`、`azlandingzone-v2` | `tfstate-prod/executor-v2.tfstate` |
 | test | `tf-test/` | `terraform-test-v2` | `tfstate-test/terraform-test-v2.tfstate` |
 
-现有 state 账户 `gtsdrtterraform2`、backend 资源组 `Terraform` 和三个 OIDC 身份保留。旧 state 文件原样保留；新初始化脚本只创建缺失的 v2 文件，禁止覆盖。业务名称使用包含订阅与重建代号的稳定后缀，避开旧软删除名称，不 purge 或自动恢复旧 Key Vault。
+现有 state 账户 `gtsdrtterraform2`、backend 资源组 `Terraform` 和三个 OIDC 身份保留。旧 state 文件原样保留；新初始化脚本只创建缺失的 v2 文件，禁止覆盖。业务名称使用包含订阅与重建代号的稳定后缀，避开旧 v1 名称。生产开启当前配置名称的 Key Vault 软删除恢复，以支持销毁后的同名部署；恢复保留 Vault 内容并经过 production 审批，purge 仍关闭。
 
 foundation 由具备资源组创建及 RBAC 管理权限的 Azure 管理员执行，创建 3 个组、2 个自定义角色和 7 个角色分配。资源组设有 `prevent_destroy`；日常 GitHub 工作流只操作 prod/test state，不删除 foundation 的资源组或授权。
 

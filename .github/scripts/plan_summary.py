@@ -1,4 +1,5 @@
 """Publish resource actions and a bounded allowlist of security settings."""
+import argparse
 import html
 import json
 import sys
@@ -109,24 +110,30 @@ def settings(resource):
         if values != ["[absent]", "[absent]"]:
             yield path, *values
 
-def summary(document):
+def summary(document, key_vault_recovery=False):
     rows = []
     details = []
+    recovery_notice = []
     for resource in document.get("resource_changes", []):
         actions = resource["change"]["actions"]
         if actions == ["no-op"]:
             continue
         address = cell(resource["address"])
         rows.append(f"| `{address}` | {', '.join(actions)} |")
+        if key_vault_recovery and resource.get("type") == "azurerm_key_vault" and "create" in actions:
+            recovery_notice = ["", "Key Vault recovery is enabled: a create action may restore the configured soft-deleted vault and retain its existing contents. Review this behavior before approving production. Purge remains disabled."]
         for field, before, after in settings(resource):
             details.append(f"| `{address}` | `{field}` | {cell(before)} | {cell(after)} |")
     return "\n".join(["### Terraform resource actions", "",
                       "Only allowlisted security settings are shown. IPs, IDs, arbitrary strings, sensitive values, variables and outputs are withheld.", "",
                       "| Resource | Actions |", "|---|---|", *rows,
-                      "", f"Changed resources: {len(rows)}", "",
+                      "", f"Changed resources: {len(rows)}", *recovery_notice, "",
                       "### Security settings for review", "",
                       "| Resource | Setting | Before | After |", "|---|---|---|---|", *details, ""])
 
 
 if __name__ == "__main__":
-    print(summary(json.load(sys.stdin)))
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--key-vault-recovery", choices=("enabled", "disabled"), default="disabled")
+    args = parser.parse_args()
+    print(summary(json.load(sys.stdin), key_vault_recovery=args.key_vault_recovery == "enabled"))

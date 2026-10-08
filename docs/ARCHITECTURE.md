@@ -23,7 +23,7 @@
 
 foundation 自定义 plan 角色的 assignable scope 是目标订阅，但角色分配 scope 只落在三个业务组，不等于授予订阅级密钥读取。它不获得 backend 资源组的 listKeys 权限，不获得管理面写入或业务 secret 数据角色。
 
-AzureRM 创建 Key Vault 时查询同名 deleted vault，生产因此得到 `Microsoft.KeyVault/locations/deletedVaults/read` 和 `Microsoft.KeyVault/locations/operationResults/read`；不获得 purge/recover 写入。新资源名称避开旧软删除名称，provider 的 Key Vault 自动恢复关闭。
+AzureRM 创建 Key Vault 时查询同名 deleted vault，生产因此得到 `Microsoft.KeyVault/locations/deletedVaults/read` 和 `Microsoft.KeyVault/locations/operationResults/read`。该订阅范围角色只授予元数据读取，不增加写入或 purge 权限。生产的组范围 Contributor 已包含目标组的 vaults/write，可恢复该组中当前配置名称的软删除 Vault。provider 的生产 Key Vault 自动恢复开启；旧 v1 名称与当前 namespace 不同。恢复在 production 审批后的 apply 中执行，保留已有 Vault 内容；诊断设置需由 Terraform 重建。[Microsoft 对恢复权限和同名限制的说明](https://learn.microsoft.com/en-us/azure/key-vault/general/soft-delete-overview)
 
 plan 因刷新计算属性会读取诊断密钥，仍属于敏感数据身份。production 环境审批保护生产身份及私钥，main Ruleset 保护工作流代码，二者必须同时保持。当前 production 由 `atea-shuangliang` 审批、禁止自行审批和管理员绕过，两个环境仅允许 main。
 
@@ -73,7 +73,7 @@ backend 使用 Entra ID，现有 state 账户的 Shared Key/匿名 Blob 访问�
 
 私钥仅存于各 environment 的 `TF_PLAN_PRIVATE_KEY`。解密、上下文、到期和摘要验证全部通过才写出 mode 0600 的计划。审批者审查的是相同计划的公开安全摘要，apply 执行保存计划，不重新生成计划。
 
-摘要只接受有限枚举、布尔值、有界数字和端口；具体 IP、任意字符串、ID、标签、变量、输出、敏感及未知值隐藏。Terraform 原始输出不发布，统一执行器只报告固定错误类别，临时日志删除；必要的详细诊断由授权身份在受限位置复现。
+摘要只接受有限枚举、布尔值、有界数字和端口；具体 IP、任意字符串、ID、标签、变量、输出、敏感及未知值隐藏。生产计划包含 Key Vault create 时会注明可能恢复同名软删除 Vault 并保留内容。Terraform 原始输出不发布，统一执行器只报告固定错误类别和固定提示，临时日志删除；必要的详细诊断由授权身份在受限位置复现。
 
 PR 检查不获得 Azure 凭据、OIDC 或 state。foundation mock 测试验证新组名、角色动作和 scope，并纳入必需的 Security Checks；普通 validate 还覆盖三个根模块。
 

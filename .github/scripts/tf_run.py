@@ -6,6 +6,9 @@ import subprocess
 import sys
 
 ERRORS = {
+    "key-vault-soft-delete": ("an existing soft-deleted key vault exists", "recovering this keyvault has been disabled"),
+    "api-conflict": ("retryableerrorduetoanotheroperation", "anotheroperationinprogress", "toomanyrequests"),
+    "provider-error": ("provider produced inconsistent final plan", "provider produced inconsistent result after apply", "doesn't support update"),
     "authorization": ("authorizationfailed", "authorizationpermissionmismatch", "forbidden", "aadsts"),
     "state-lock": ("error acquiring the state lock", "leasealreadypresent", "leaseidmissing"),
     "stale-plan": ("saved plan is stale", "saved plan does not match"),
@@ -13,6 +16,12 @@ ERRORS = {
     "name-conflict": ("alreadyexists", "already exists", "already in use", "conflict"),
     "network": ("context deadline exceeded", "no such host", "connection refused", "i/o timeout"),
     "registration": ("missingsubscriptionregistration", "noregisteredproviderfound"),
+}
+
+HINTS = {
+    "key-vault-soft-delete": "A configured Key Vault name is retained by soft delete. Review recovery settings and create a new deployment plan.",
+    "api-conflict": "Azure reports concurrent operations or throttling. Wait for active operations to finish before creating a new plan.",
+    "provider-error": "The provider reported an unsupported operation or inconsistent result. Reproduce with an authorized identity before retrying.",
 }
 
 
@@ -29,8 +38,12 @@ def run(command, log):
         with os.fdopen(descriptor, "wb") as destination:
             result = subprocess.run(command, stdout=destination, stderr=subprocess.STDOUT)
         if result.returncode:
-            labels = ", ".join(categories(path.read_text(errors="replace")))
+            detected = categories(path.read_text(errors="replace"))
+            labels = ", ".join(detected)
             print(f"::error::Terraform command failed ({labels}). Raw output was withheld; reproduce with an authorized identity.")
+            for label in detected:
+                if label in HINTS:
+                    print(f"::notice::{HINTS[label]}")
         else:
             print("Terraform command completed.")
         return result.returncode
