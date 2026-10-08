@@ -167,6 +167,41 @@ class SecurityTests(unittest.TestCase):
         self.assertNotIn("secret-marker", output.getvalue())
         self.assertFalse(log.exists())
 
+    def test_runner_classifies_soft_delete_conflicts_and_provider_errors_without_leaks(self):
+        cases = [
+            ('An existing soft-deleted Key Vault exists with the Name "secret-marker", however automatically recovering this KeyVault has been disabled via the "features" block.', 'key-vault-soft-delete'),
+            ('RetryableErrorDueToAnotherOperation secret-marker', 'api-conflict'),
+            ('Provider produced inconsistent final plan secret-marker', 'provider-error'),
+            ("Error: doesn't support update secret-marker", 'provider-error'),
+        ]
+        for message, category in cases:
+            with self.subTest(category=category, message=message):
+                log = Path(self.case.name) / 'classified.log'
+                output = io.StringIO()
+                with redirect_stdout(output):
+                    status = runner.run([sys.executable, '-c', f'import sys; print({message!r}); sys.exit(1)'], log)
+                self.assertEqual(status, 1)
+                self.assertIn(f'({category})', output.getvalue())
+                self.assertNotIn('secret-marker', output.getvalue())
+                self.assertFalse(log.exists())
+
+    def test_summary_explains_recovery_only_for_key_vault_create_when_enabled(self):
+        resource = {'address': 'azurerm_key_vault.test', 'type': 'azurerm_key_vault',
+                    'change': {'actions': ['create'], 'after': {'name': 'secret-marker'}}}
+        document = {'resource_changes': [resource]}
+        text = summary.summary(document, key_vault_recovery=True)
+        self.assertIn('may restore', text)
+        self.assertIn('retain its existing contents', text)
+        self.assertNotIn('secret-marker', text)
+        self.assertNotIn('may restore', summary.summary(document))
+        for actions in (['no-op'], ['update'], ['delete']):
+            with self.subTest(actions=actions):
+                resource['change']['actions'] = actions
+                self.assertNotIn('may restore', summary.summary(document, key_vault_recovery=True))
+        resource['change']['actions'] = ['create']
+        resource['type'] = 'azurerm_virtual_network'
+        self.assertNotIn('may restore', summary.summary(document, key_vault_recovery=True))
+
     def test_workflow_lint_adapter_rejects_invalid_queue_combinations(self):
         valid = "concurrency:\n  group: terraform-deploy\n  cancel-in-progress: false\n  queue: max\njobs:\n  example: {}\n"
         adapted = workflows.lint_source(valid)

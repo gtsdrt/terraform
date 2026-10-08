@@ -66,7 +66,7 @@ resource "azurerm_role_assignment" "apply" {
   principal_type       = "ServicePrincipal"
 }
 
-# AzureRM 创建 Key Vault 时会查询同名 deleted vault；仅授予元数据读取，不允许恢复或 purge。
+# 订阅范围仅授予 deleted vault 元数据读取；本组 vault 的恢复使用已有 Contributor 的 vaults/write。
 resource "azurerm_role_definition" "deleted_vault_reader" {
   name               = "gtsdrt Terraform v2 Deleted Vault Reader ${var.subscription_id}"
   role_definition_id = uuidv5("url", "${local.subscription_scope}/terraform-v2/deleted-vault-reader")

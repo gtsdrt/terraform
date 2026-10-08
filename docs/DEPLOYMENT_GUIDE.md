@@ -240,7 +240,9 @@ gh workflow run destroy.yml --repo gtsdrt/terraform --ref main -f env=tf-test -f
 
 资源组保留；Key Vault 有防清除保护，Log Analytics 不永久 purge。**销毁 Landing Zone 仍会删除诊断存储账户及其归档日志**，这些日志不受上述 Key Vault/Log Analytics 软删除设置保护。重要审计日志应独立保留后再审批销毁。
 
-软删除后的同名 Key Vault/工作区恢复或重建可能需要管理员恢复资源并重新导入 state；当前部署身份不具备订阅范围的恢复权限。不要把 purge 当成日常回滚。
+Key Vault 销毁后名称在软删除保留期内仍被占用。当前生产配置允许审批后的 apply 恢复该组中配置的同名 Vault，并保留原有内容；诊断配置由 Terraform 重建。它使用组范围 Contributor 的 vaults/write 及订阅范围 deleted-vault 元数据读取，不扩大到订阅写入或 purge。计划中的 Key Vault create 会注明这种恢复可能性。[2026-10-08 的实际问题与处理](DEPLOYMENT_INCIDENT_2026-10-08.md)
+
+若需要完全全新的 Vault 内容，应选择新的名称并审查新的计划。若管理员已经在 Portal/CLI 恢复了 Vault，而当前 state 没有该对象，需先 import 再部署，避免同名活跃资源冲突。不要把 purge 当成日常回滚。
 
 ## 11. 常见问题与处理
 
@@ -256,6 +258,9 @@ gh workflow run destroy.yml --repo gtsdrt/terraform --ref main -f env=tf-test -f
 | `state-lock` | 查找仍在运行的写入执行者或人工操作；不要强制解锁活跃 lease |
 | `stale-plan` | state 已变化或计划与 state 不匹配；创建新运行，重新审查 |
 | `authorization` | 核对 OIDC subject、Client ID、环境分支限制、资源组和容器 RBAC；注意权限传播时间 |
+| `key-vault-soft-delete` | 生产销毁后的同名 Vault 仍在软删除期，且运行配置关闭恢复。使用包含本次恢复修复的新 main 创建新计划；恢复保留内容且经过 production 审批 |
+| `api-conflict` | Azure 返回并发操作冲突或限流；先确认先前操作结束，再生成新计划。Activity Log 中一次失败后成功的重试不一定是 Terraform 最终失败原因 |
+| `provider-error` | provider 返回不支持 update 或计划/结果不一致；由授权身份核对实际差异后修复并生成新计划 |
 | 已给 test/prod Contributor，plan 仍报 authorization | plan job 使用 `gtsdrt-terraform-plan`；它也需要目标组的自定义 Plan Reader。检查实际运行提交是否仍引用旧组名，以及 foundation 是否已完成 |
 | IAM 搜索不到 App registrations 的 Object ID | 在 Add role assignment 的 Members 中选择 User, group, or service principal，按应用名称搜索；授权对象是 Enterprise applications 中的服务主体，详情见[身份说明](ARCHITECTURE.md#定位服务主体与-rbac-成员) |
 | foundation 导入 Contributor 后报 doesn't support update | 使用 PR #16 已合入的 main；省略 skip_service_principal_aad_check、保留 principal_type 后重新生成计划。已创建或导入的对象保持现有 state，旧计划不复用 |
@@ -264,6 +269,8 @@ gh workflow run destroy.yml --repo gtsdrt/terraform --ref main -f env=tf-test -f
 | `quota` / `name-conflict` / `network` | 这些是日志匹配出的分类线索；使用有权限的身份在受限位置确认实际原因 |
 
 执行器不会把原始 plan/apply/destroy 输出发布到公开日志，只显示固定类别并清理临时文件。完整 state、计划和原始日志可能包含敏感数据，不能贴到公开 PR、Issue 或 job summary。
+
+`unclassified` 表示错误文本没有命中已有固定类别，本身不说明需要更多权限。2026-10-08 的案例实际是生产全量销毁后，同名 Key Vault 软删除恢复被配置关闭；新增分类避免再次把这一错误隐藏成泛化信息。
 
 ## 12. 部署后的验收
 

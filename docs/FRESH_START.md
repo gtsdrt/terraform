@@ -1,6 +1,6 @@
 # 从零重建：Terraform 创建资源组与业务资源
 
-本方案用于原业务资源已经丢失、选择全新重建的场景。v2 使用新资源组、新业务资源名称和新 state key，不覆盖旧 state，不尝试恢复或 purge 旧 Key Vault/日志资源。
+本方案用于原业务资源已经丢失、选择全新重建的场景。v2 使用新资源组、新业务资源名称和新 state key，不覆盖旧 state，不使用旧 v1 Key Vault 的名称。初次建立新 namespace 与随后销毁当前 namespace 后的同名部署不同：后者允许在生产审批后恢复当前名称的软删除 Vault，见[2026-10-08 处理说明](DEPLOYMENT_INCIDENT_2026-10-08.md)。
 
 2026-10-06 已完成此次 v2 初始化及完整部署，代码通过 [PR #16](https://github.com/gtsdrt/terraform/pull/16) 合入 main。结果见[部署记录](DEPLOYMENT_RECORD_2026-10-06.md)。日常更新按[部署指南](DEPLOYMENT_GUIDE.md)运行 main 的 `plan-only → full`；本文保留管理员初始化和接管已有基础资源的步骤。再次建立全新一代环境时，先协调新的 namespace 和 state key，见第 6 节。
 
@@ -18,7 +18,7 @@ foundation 真正声明了 `azurerm_resource_group`，创建 `terraform-prod-v2`
 
 资源组设置 `prevent_destroy = true`；这约束 Terraform foundation 操作，不会阻止具有 Azure 删除权限的账号在 Portal 手动删除。不要把 foundation state 纳入日常 destroy 或测试清理。
 
-plan 的诊断密钥读取角色只分配在三个业务资源组；test/prod 的 Contributor 也仅分配在各自资源组。生产在订阅范围额外获得两个 deleted-vault 元数据读取操作，供 provider 检查名称占用，不获得恢复或 purge 权限。GitHub 身份不需要订阅 Owner，也不需要订阅 Contributor。
+plan 的诊断密钥读取角色只分配在三个业务资源组；test/prod 的 Contributor 也仅分配在各自资源组。生产在订阅范围额外获得两个 deleted-vault 元数据读取操作，供 provider 检查名称占用；恢复当前组中同名 Vault 使用该组已有 Contributor 的 vaults/write，不增加订阅范围恢复或 purge 权限。GitHub 身份不需要订阅 Owner，也不需要订阅 Contributor。
 
 ## 2. 为什么先由管理员执行 foundation
 
@@ -112,7 +112,7 @@ foundation 的远程 state 由管理员使用，GitHub 的 plan/test/prod 身份
 
 业务组名包含 v2，Landing Zone 的 Key Vault/Storage/Log Analytics 后缀由订阅 ID、资源组名、前缀和 `deployment_generation = "v2"` 共同计算。后缀稳定，不会每次 plan 改变，也与旧 `kv-azlz-9ee601` 等名字不同。
 
-Key Vault 的自动恢复关闭，生产仍保持 purge protection。旧软删除资源留在原状态，本流程不 purge、不恢复，不使用它们原来的名称。
+生产的 Key Vault 自动恢复开启，purge protection 保持启用，destroy 时 purge 保持关闭。首次 v2 重建避开旧 v1 名称；旧 v1 软删除资源保留原状。以后销毁当前 v2 Vault 后再次部署同名 Vault，会在 production 审批后的 apply 中恢复它，保留原有内容并重建诊断配置。
 
 新 v2 state 不接管旧资源。若发现旧 namespace 仍有活跃资源，应另外盘点其费用和生命周期，不能假定改变 state key 会删除它们。下一次再次重建为 v3 时，应一起调整资源组名、generation、三个 backend key 及初始化脚本的允许列表；不能只改 state key 而继续重复管理同一批活跃资源。
 
