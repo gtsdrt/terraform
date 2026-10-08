@@ -112,7 +112,9 @@ foundation 的远程 state 由管理员使用，GitHub 的 plan/test/prod 身份
 
 业务组名包含 v2，Landing Zone 的 Key Vault/Storage/Log Analytics 后缀由订阅 ID、资源组名、前缀和 `deployment_generation = "v2"` 共同计算。后缀稳定，不会每次 plan 改变，也与旧 `kv-azlz-9ee601` 等名字不同。
 
-生产的 Key Vault 自动恢复开启，purge protection 保持启用，destroy 时 purge 保持关闭。首次 v2 重建避开旧 v1 名称；旧 v1 软删除资源保留原状。以后销毁当前 v2 Vault 后再次部署同名 Vault，会在 production 审批后的 apply 中恢复它，保留原有内容并重建诊断配置。
+生产的 Key Vault 自动恢复开启，purge protection 保持启用，destroy 时 purge 保持关闭。首次 v2 重建避开旧 v1 名称；旧 v1 软删除资源保留原状。以后销毁当前 v2 Vault 后，在软删除保留期内再次部署同名 Vault，会在 production 审批后的 apply 中恢复它，保留原有内容并重建诊断配置。
+
+若保留期结束且 Azure 已完成清除，下次部署创建新的 Vault，原有内容无法恢复。本次恢复部署与后续全量销毁均已成功验证，见[验证结果](DEPLOYMENT_INCIDENT_2026-10-08.md#修复后的验证结果)。日常判断按[生命周期说明](DEPLOYMENT_GUIDE.md#销毁后下次部署会怎样)，不把一次成功视为所有未来权限、区域或 state 变化都能自动处理。
 
 新 v2 state 不接管旧资源。若发现旧 namespace 仍有活跃资源，应另外盘点其费用和生命周期，不能假定改变 state key 会删除它们。下一次再次重建为 v3 时，应一起调整资源组名、generation、三个 backend key 及初始化脚本的允许列表；不能只改 state key 而继续重复管理同一批活跃资源。
 

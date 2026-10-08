@@ -244,12 +244,29 @@ Key Vault 销毁后名称在软删除保留期内仍被占用。当前生产配�
 
 若需要完全全新的 Vault 内容，应选择新的名称并审查新的计划。若管理员已经在 Portal/CLI 恢复了 Vault，而当前 state 没有该对象，需先 import 再部署，避免同名活跃资源冲突。不要把 purge 当成日常回滚。
 
+### 销毁后下次部署会怎样
+
+当前 main 的生产 provider 设置为 `recover_soft_deleted_key_vaults = true`、`purge_soft_delete_on_destroy = false`，Vault 保留期为 7 天且启用 purge protection。在配置、区域、权限和 state 保持一致时，同名软删除导致的既有阻塞已通过恢复处理。
+
+| 下次部署时的实际状态 | Terraform 的预期处理 | Vault 数据 |
+|---|---|---|
+| 活跃 Vault 存在，且在当前 state 中 | 对照配置使用或更新 | 原有内容保留 |
+| 当前名称的 Vault 在软删除保留期内，且不在业务 state 中 | 在 production 审批后的 apply 恢复同名 Vault，并重建诊断设置 | 恢复已有内容 |
+| 保留期结束，Azure 已完成清除且名称可用 | 新建 Vault，并建立诊断设置 | 原有 secrets/keys/certificates 无法恢复 |
+| 已由管理员手动恢复，但当前 state 没有该对象 | 先 import，再生成和审批新计划 | 按恢复后的实际内容验收 |
+
+7 天是保留期限，不保证到期瞬间名称就已释放；删除、恢复或清除操作尚未完成时可能需要稍后生成新运行。恢复能力与 purge protection、名称占用规则见 [Microsoft 软删除说明](https://learn.microsoft.com/en-us/azure/key-vault/general/soft-delete-overview)。恢复 Vault 也不自动恢复已删除的 Vault 级 RBAC/Event Grid 等集成；如果以后配置这些集成，应纳入 Terraform 管理或另行重建。foundation 的组范围角色保持独立生命周期。
+
+2026-10-08 已实际验证[恢复部署 37748553797](https://github.com/gtsdrt/terraform/actions/runs/37748553797)和[后续生产全量销毁 37749590433](https://github.com/gtsdrt/terraform/actions/runs/37749590433)成功。这验证了当前恢复和销毁路径，不代表任意未来运行都不会失败：权限收回、组/名称/区域变化、state 丢失、Azure 临时冲突、配额或 provider 变更仍需按实际错误处理。[完整验证记录](DEPLOYMENT_INCIDENT_2026-10-08.md#修复后的验证结果)
+
+后续每次使用最新 main 新建 `plan-only / full` 运行，审查本次计划，保留 foundation、backend 和业务 state。仅回收 network 时选 `scope=network`，以保留 Landing Zone 的 Vault、workspace 和诊断存储；目标删除范围仍以审批前的 destroy 清单为准。生产发起/合入账号使用 `gtsdrt`，审批账号使用 `atea-shuangliang`。
+
 ## 11. 常见问题与处理
 
 | 现象 | 检查与处理 |
 |---|---|
 | 只有 Merge pull request，没有 deploy 按钮 | 当前在 PR 页面；进入 Actions 的具体运行 Summary |
-| reviewer 无法批准 production | 核对登录账号、运行发起人和 production 的 required reviewers；禁止自行审批，不使用管理员绕过 |
+| reviewer 无法批准 production | 进入具体运行的 Summary，确认浏览器登录 atea-shuangliang；若该运行也由此账号发起，取消等待运行后以 gtsdrt 新建 full，再由 atea 审批。禁止自行审批，不使用管理员绕过 |
 | 计划过期 / artifact 不存在 | 新建 full/destroy 运行并审查新计划；不复用或手动替换旧 artifact |
 | 测试失败或清理失败 | 生产会停止；先诊断错误，再检查恢复任务，修复后创建新运行 |
 | 整条运行取消后测试资源仍存在 | 正常取消可能中断清理；等待独立恢复，或确认写入队列释放后手动运行 Test Recovery |

@@ -4,6 +4,8 @@ Azure 网络与 Landing Zone 的 v2 从零重建配置。资源组和限定授�
 
 2026-10-06 的 v2 完整部署已成功，三个业务资源组均位于 `westeurope`，测试资源已清理。运行链接、审批人与 Azure 验收结果见[部署记录](docs/DEPLOYMENT_RECORD_2026-10-06.md)。后续日常部署使用 main 的 `plan-only → full`，按当前变更生成和审批新计划。
 
+2026-10-08 又验证了同名 Key Vault 恢复、完整部署及后续生产全量销毁均成功，见[恢复与销毁验证](docs/DEPLOYMENT_INCIDENT_2026-10-08.md#修复后的验证结果)。下次部署会根据 Vault 当前状态选择使用、恢复或新建；保留期结束并完成清除后，原有 secrets/keys 无法恢复，详见[生命周期说明](docs/DEPLOYMENT_GUIDE.md#销毁后下次部署会怎样)。
+
 - 首次初始化：[从零重建说明](docs/FRESH_START.md)
 - 日常操作：[部署、审批、销毁与恢复](docs/DEPLOYMENT_GUIDE.md)
 - 权限边界：[安全架构](docs/ARCHITECTURE.md)
