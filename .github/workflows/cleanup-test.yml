@@ -60,7 +60,7 @@ jobs:
       - uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd # v3
         if: steps.recover.outputs.needed == 'true'
         with:
-          terraform_version: "1.9.8"
+          terraform_version: "1.16.6"
           terraform_wrapper: false
       - name: Clean only the ephemeral test state and retain its resource group
         if: steps.recover.outputs.needed == 'true'

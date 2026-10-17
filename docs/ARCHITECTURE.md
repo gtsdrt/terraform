@@ -16,7 +16,7 @@
 
 | 身份 | OIDC subject 后缀 | 管理权限 | state 数据权限 |
 |---|---|---|---|
-| plan | `ref:refs/heads/main` | 三个 v2 组的只读角色，包含刷新诊断资源所需的 Storage listKeys/Log Analytics sharedKeys | prod/test 容器 Blob Data Reader |
+| plan | `environment:plan-readonly` | 三个 v2 组的只读角色，包含刷新诊断资源所需的 Storage listKeys/Log Analytics sharedKeys | prod/test 容器 Blob Data Reader |
 | test | `environment:test` | 仅 test-v2 组 Contributor | 仅 test 容器 Blob Data Contributor |
 | prod | `environment:production` | 仅两个生产 v2 组 Contributor；订阅范围附加 deleted-vault 元数据读取 | 仅 prod 容器 Blob Data Contributor |
 | 本地管理员 | Azure CLI 登录 | foundation 与初始化所需管理权限 | foundation 容器 Blob Data Contributor |
@@ -25,7 +25,7 @@ foundation 自定义 plan 角色的 assignable scope 是目标订阅，但角色
 
 AzureRM 创建 Key Vault 时查询同名 deleted vault，生产因此得到 `Microsoft.KeyVault/locations/deletedVaults/read` 和 `Microsoft.KeyVault/locations/operationResults/read`。该订阅范围角色只授予元数据读取，不增加写入或 purge 权限。生产的组范围 Contributor 已包含目标组的 vaults/write，可恢复该组中当前配置名称的软删除 Vault。provider 的生产 Key Vault 自动恢复开启；旧 v1 名称与当前 namespace 不同。恢复在 production 审批后的 apply 中执行，保留已有 Vault 内容；诊断设置需由 Terraform 重建。[Microsoft 对恢复权限和同名限制的说明](https://learn.microsoft.com/en-us/azure/key-vault/general/soft-delete-overview)
 
-plan 因刷新计算属性会读取诊断密钥，仍属于敏感数据身份。production 环境审批保护生产身份及私钥，main Ruleset 保护工作流代码，二者必须同时保持。production 审批人为 `atea-shuangliang` 和 `gtsdrt`，开启 `prevent_self_review`（谁触发由另一人审批），禁止管理员绕过；两个环境仅允许 main。
+plan 因刷新计算属性会读取诊断密钥，仍属于敏感数据身份。plan job 绑定 `plan-readonly` 环境（仅 main、无人工审批），plan 身份的 OIDC subject 为该环境；旧的 `ref:refs/heads/main` 联邦凭据应在验证一次 plan 成功后移除，使该身份只能从受保护环境获取。production 环境审批保护生产身份及私钥，main Ruleset 保护工作流代码，二者必须同时保持。production 审批人为 `atea-shuangliang` 和 `gtsdrt`，开启 `prevent_self_review`（谁触发由另一人审批），禁止管理员绕过；两个环境仅允许 main。
 
 ### 定位服务主体与 RBAC 成员
 
@@ -33,11 +33,11 @@ plan 因刷新计算属性会读取诊断密钥，仍属于敏感数据身份。
 
 | Azure 身份 | Application / Client ID | Service Principal Object ID |
 |---|---|---|
-| `gtsdrt-terraform-plan` | `dd55a47c-10f7-494f-8ffd-b7905fe1d307` | `75231122-8601-45c7-90d2-8c0955d616eb` |
-| `gtsdrt-terraform-test` | `52189b8e-a0c9-47b6-84c3-f3f86b3bd047` | `335dd3bc-d604-408b-983e-55a81f558482` |
-| `gtsdrt-terraform-prod` | `a3d03a7c-0c1f-44bf-9ed3-4282114abe9b` | `20b490df-c599-472b-841d-5f450ece0d21` |
+| `gtsdrt-terraform-plan` | `<plan-client-id>` | `<plan-object-id>` |
+| `gtsdrt-terraform-test` | `<test-client-id>` | `<test-object-id>` |
+| `gtsdrt-terraform-prod` | `<prod-client-id>` | `<prod-object-id>` |
 
-以上为 2026-10-06 核对的身份元数据，不是登录密钥。Client ID 配置在 GitHub repository variables；Azure RBAC 的 principal_id 使用 Service Principal Object ID。App registrations 的 Object ID 标识应用注册对象，与 Enterprise applications 中服务主体的 Object ID 不同。[Microsoft 对应用对象与服务主体的说明](https://learn.microsoft.com/en-us/entra/identity-platform/app-objects-and-service-principals)
+上表只保留占位符；具体 Client ID 配置在 GitHub repository variables，Service Principal Object ID 保存在私有运维记录中，二者都不是登录密钥。Azure RBAC 的 principal_id 使用 Service Principal Object ID。App registrations 的 Object ID 标识应用注册对象，与 Enterprise applications 中服务主体的 Object ID 不同。[Microsoft 对应用对象与服务主体的说明](https://learn.microsoft.com/en-us/entra/identity-platform/app-objects-and-service-principals)
 
 Portal 中进入 **Microsoft Entra ID → Enterprise applications**，按名称定位服务主体。资源组授权入口是 **Access control (IAM) → Add → Add role assignment → Members → User, group, or service principal → Select members**；搜索 `gtsdrt-terraform-test` 等显示名称并选择。现有 Role assignments 列表的搜索只筛选已经授权的成员。托管身份选择入口不用于这三个应用。[Microsoft 的 RBAC 操作步骤](https://learn.microsoft.com/en-us/azure/role-based-access-control/role-assignments-portal)
 
@@ -76,6 +76,8 @@ backend 使用 Entra ID，现有 state 账户的 Shared Key/匿名 Blob 访问�
 摘要只接受有限枚举、布尔值、有界数字和端口；具体 IP、任意字符串、ID、标签、变量、输出、敏感及未知值隐藏。生产计划包含 Key Vault create 时会注明可能恢复同名软删除 Vault 并保留内容。Terraform 原始输出不发布，统一执行器只报告固定错误类别和固定提示，临时日志删除；必要的详细诊断由授权身份在受限位置复现。
 
 PR 检查不获得 Azure 凭据、OIDC 或 state。foundation mock 测试验证新组名、角色动作和 scope，并纳入必需的 Security Checks；普通 validate 还覆盖三个根模块。
+
+部署 plan job 在发布摘要前运行静态**跨层权限预检**：订阅级资源（Defender pricing、订阅诊断、role definition/assignment 等）、未获 Lock Manager 授权的 module 里的管理锁、以及 plan/apply 身份相同都会让计划失败。这些类别的变更应放在 foundation。每日 **Terraform Drift Detection** 用 plan 只读身份执行 `plan -detailed-exitcode`，只发布脱敏摘要，漂移时运行变红；不写 state、不 apply。
 
 ## 写入串行与资源生命周期
 

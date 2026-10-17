@@ -61,12 +61,16 @@ gh workflow run deploy.yml --repo gtsdrt/terraform --ref main -f mode=full
 
 只有 main 可部署；命中 `tf/**`、`tf-test/**`、`modules/**` 或 `.github/**` 的 main push 自动 full。仅 README/docs 改动不自动部署。foundation 没有自动 apply 工作流，必须由管理员单独维护。
 
+部署 plan job 在发布摘要前运行**跨层权限预检**：计划中出现订阅级资源、无 Lock Manager 授权的 module 中的管理锁、或 plan/apply 身份相同，会直接失败，避免"plan 通过、apply 403"。每日 **Terraform Drift Detection** 用只读身份运行 `plan -detailed-exitcode`，只发布脱敏资源动作，发现漂移时运行变红；它不写 state、不 apply。
+
 ```text
 管理员：准备 v2 backend → Terraform foundation 创建组与授权
 GitHub：plan(tf-test, tf) → test apply → test cleanup → production 审批 → prod apply
 ```
 
 production 审批人为 `atea-shuangliang` 和 `gtsdrt`，并开启 `prevent_self_review`：谁触发部署，就由另一个账号审批。PR 的 Approve/Merge 和 Actions 的 Review deployments / Approve and deploy 是两种不同操作。禁止自行审批及管理员绕过。
+
+plan job（部署、销毁、漂移检测）绑定 `plan-readonly` 环境（仅 main、无人工审批）；plan 身份的 OIDC subject 为该环境。旧的 `ref:refs/heads/main` 联邦凭据应在一次 plan 成功验证后移除。
 
 计划使用只读身份；两个 apply 身份各自取得对应环境的私钥。计划绑定仓库、提交、run ID、环境、操作目的和销毁范围，24 小时后拒绝执行，密文保留 3 天。公开摘要仅显示资源动作及允许列表中的安全字段，敏感值和任意属性不公开。
 
