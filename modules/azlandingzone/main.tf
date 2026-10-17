@@ -220,14 +220,28 @@ resource "azurerm_storage_account" "diagnostics" {
   tags = var.tags
 }
 
-# 审计落地点自身也要有诊断，否则"谁动过审计日志"不可见
+# 审计落地点自身也要有诊断，否则"谁动过审计日志"不可见。
+# ⚠️ 存储账户级的诊断只有 Capacity/Transaction 指标，没有日志类别；
+#    StorageRead/Write/Delete 只在 blob service 级可用，因此 target 指向 blobServices/default。
 resource "azurerm_monitor_diagnostic_setting" "storage" {
   name                       = "diag-${local.storage_account_name}"
-  target_resource_id         = azurerm_storage_account.diagnostics.id
+  target_resource_id         = "${azurerm_storage_account.diagnostics.id}/blobServices/default"
   log_analytics_workspace_id = azurerm_log_analytics_workspace.this.id
 
   enabled_log {
-    category_group = "audit"
+    category = "StorageRead"
+  }
+
+  enabled_log {
+    category = "StorageWrite"
+  }
+
+  enabled_log {
+    category = "StorageDelete"
+  }
+
+  enabled_metric {
+    category = "Transaction"
   }
 }
 
