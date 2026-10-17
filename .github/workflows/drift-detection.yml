@@ -53,7 +53,7 @@ jobs:
         run: python3 .github/scripts/check_identities.py
       - uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd # v3
         with:
-          terraform_version: "1.9.8"
+          terraform_version: "1.16.6"
           terraform_wrapper: false
       - name: Terraform init
         run: python3 ../.github/scripts/tf_run.py --log "$RUNNER_TEMP/init.log" -- terraform init -input=false -lockfile=readonly

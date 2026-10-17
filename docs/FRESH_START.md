@@ -30,7 +30,7 @@ Contributor 可以创建业务资源，但不能创建角色定义或分配 RBAC
 
 初始化代码已在 main。使用最新 main 中的脚本和配置；原 `feat/terraform-fresh-foundation` 分支合入后可删除。先暂停写入工作流并等待现有运行结束，再执行管理员初始化或接管，避免 backend、授权与正在执行的部署并发修改。
 
-在本地使用 Terraform 1.9.8、Azure CLI、GitHub CLI 和 Python 3。GitHub CLI 需要能读取仓库变量、管理工作流；Azure CLI 登录能初始化 foundation 的管理员账号。
+在本地使用 Terraform 1.16.6、Azure CLI、GitHub CLI 和 Python 3。GitHub CLI 需要能读取仓库变量、管理工作流；Azure CLI 登录能初始化 foundation 的管理员账号。
 
 ```bash
 # 读取已合入的初始化配置；本地 fetch/pull 不触发 GitHub 部署。
@@ -47,7 +47,7 @@ gh run list --repo gtsdrt/terraform --limit 20
 
 # Azure 管理员登录并选取仓库配置的订阅。
 az login
-az account set --subscription ebb9caf4-b13d-40ca-a083-488a3aec4271
+az account set --subscription <subscription-id>
 ```
 
 等待已有 deploy/destroy/recovery 运行完成或取消后再继续。不要在 apply 正执行时同时初始化。PR Check 可继续启用，它没有 Azure 凭据。

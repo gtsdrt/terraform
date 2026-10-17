@@ -33,11 +33,11 @@ plan 因刷新计算属性会读取诊断密钥，仍属于敏感数据身份。
 
 | Azure 身份 | Application / Client ID | Service Principal Object ID |
 |---|---|---|
-| `gtsdrt-terraform-plan` | `dd55a47c-10f7-494f-8ffd-b7905fe1d307` | `75231122-8601-45c7-90d2-8c0955d616eb` |
-| `gtsdrt-terraform-test` | `52189b8e-a0c9-47b6-84c3-f3f86b3bd047` | `335dd3bc-d604-408b-983e-55a81f558482` |
-| `gtsdrt-terraform-prod` | `a3d03a7c-0c1f-44bf-9ed3-4282114abe9b` | `20b490df-c599-472b-841d-5f450ece0d21` |
+| `gtsdrt-terraform-plan` | `<plan-client-id>` | `<plan-object-id>` |
+| `gtsdrt-terraform-test` | `<test-client-id>` | `<test-object-id>` |
+| `gtsdrt-terraform-prod` | `<prod-client-id>` | `<prod-object-id>` |
 
-以上为 2026-10-06 核对的身份元数据，不是登录密钥。Client ID 配置在 GitHub repository variables；Azure RBAC 的 principal_id 使用 Service Principal Object ID。App registrations 的 Object ID 标识应用注册对象，与 Enterprise applications 中服务主体的 Object ID 不同。[Microsoft 对应用对象与服务主体的说明](https://learn.microsoft.com/en-us/entra/identity-platform/app-objects-and-service-principals)
+上表只保留占位符；具体 Client ID 配置在 GitHub repository variables，Service Principal Object ID 保存在私有运维记录中，二者都不是登录密钥。Azure RBAC 的 principal_id 使用 Service Principal Object ID。App registrations 的 Object ID 标识应用注册对象，与 Enterprise applications 中服务主体的 Object ID 不同。[Microsoft 对应用对象与服务主体的说明](https://learn.microsoft.com/en-us/entra/identity-platform/app-objects-and-service-principals)
 
 Portal 中进入 **Microsoft Entra ID → Enterprise applications**，按名称定位服务主体。资源组授权入口是 **Access control (IAM) → Add → Add role assignment → Members → User, group, or service principal → Select members**；搜索 `gtsdrt-terraform-test` 等显示名称并选择。现有 Role assignments 列表的搜索只筛选已经授权的成员。托管身份选择入口不用于这三个应用。[Microsoft 的 RBAC 操作步骤](https://learn.microsoft.com/en-us/azure/role-based-access-control/role-assignments-portal)
 

@@ -52,7 +52,7 @@ def configuration(variables, account, principals):
 
 
 def empty_state():
-    return {'version': 4, 'terraform_version': '1.9.8', 'serial': 0,
+    return {'version': 4, 'terraform_version': '1.16.6', 'serial': 0,
             'lineage': str(uuid.uuid4()), 'outputs': {}, 'resources': [], 'check_results': None}
 
 
