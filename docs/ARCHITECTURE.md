@@ -77,6 +77,8 @@ backend 使用 Entra ID，现有 state 账户的 Shared Key/匿名 Blob 访问�
 
 PR 检查不获得 Azure 凭据、OIDC 或 state。foundation mock 测试验证新组名、角色动作和 scope，并纳入必需的 Security Checks；普通 validate 还覆盖三个根模块。
 
+部署 plan job 在发布摘要前运行静态**跨层权限预检**：订阅级资源（Defender pricing、订阅诊断、role definition/assignment 等）、未获 Lock Manager 授权的 module 里的管理锁、以及 plan/apply 身份相同都会让计划失败。这些类别的变更应放在 foundation。每日 **Terraform Drift Detection** 用 plan 只读身份执行 `plan -detailed-exitcode`，只发布脱敏摘要，漂移时运行变红；不写 state、不 apply。
+
 ## 写入串行与资源生命周期
 
 完整部署、销毁和恢复共用写入队列，queue:max 最多保留 100 个等待请求；生产审批等待也占用队列。plan-only 走独立只读队列，可能与写入并发，因此只是预览参考。apply 申请 state lease 并拒绝 state serial 已改变的计划；该校验不能替代云端漂移检查。

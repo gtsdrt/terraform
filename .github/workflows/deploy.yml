@@ -71,6 +71,9 @@ jobs:
       - name: Terraform plan with a read-only state identity
         # Apply is serialized and rejects stale plans. Reader cannot acquire a lease.
         run: python3 ../.github/scripts/tf_run.py --log "$RUNNER_TEMP/plan.log" -- terraform plan -lock=false -no-color -input=false -var-file=terraform.tfvars -out=tfplan
+      - name: Cross-layer permission preflight
+        # Fail before approval if the plan contains resources the apply identity cannot write.
+        run: terraform show -json tfplan | python3 ../.github/scripts/preflight_permissions.py --environment ${{ matrix.dir }}
       - name: Publish actions and allowlisted security settings
         run: terraform show -json tfplan | python3 ../.github/scripts/plan_summary.py --key-vault-recovery "${{ matrix.dir == 'tf' && 'enabled' || 'disabled' }}" >> "$GITHUB_STEP_SUMMARY"
       - name: Encrypt the exact plan using the environment public certificate

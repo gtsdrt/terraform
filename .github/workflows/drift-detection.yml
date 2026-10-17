@@ -1,0 +1,65 @@
+name: Terraform Drift Detection
+
+on:
+  schedule:
+    - cron: '23 3 * * *'
+  workflow_dispatch:
+
+defaults:
+  run:
+    shell: bash
+
+permissions:
+  contents: read
+
+# Read-only queue: never blocks or shares the write deployment queue.
+concurrency:
+  group: terraform-drift
+  cancel-in-progress: false
+
+env:
+  ARM_SUBSCRIPTION_ID: ${{ vars.TERRAFORM_AZURE_SUBSCRIPTION_ID }}
+  ARM_TENANT_ID: ${{ vars.TERRAFORM_AZURE_TENANT_ID }}
+  ARM_USE_OIDC: true
+  ARM_USE_CLI: false
+  TF_IN_AUTOMATION: true
+
+jobs:
+  drift:
+    name: Drift (${{ matrix.dir }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      id-token: write
+    strategy:
+      fail-fast: false
+      matrix:
+        dir: [tf-test, tf]
+    env:
+      ARM_CLIENT_ID: ${{ vars.TERRAFORM_PLAN_AZURE_CLIENT_ID }}
+      PLAN_CLIENT_ID: ${{ vars.TERRAFORM_PLAN_AZURE_CLIENT_ID }}
+      TEST_CLIENT_ID: ${{ vars.TERRAFORM_TEST_AZURE_CLIENT_ID }}
+      PROD_CLIENT_ID: ${{ vars.TERRAFORM_PROD_AZURE_CLIENT_ID }}
+    defaults:
+      run:
+        working-directory: ${{ matrix.dir }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Verify separate identities
+        working-directory: .
+        run: python3 .github/scripts/check_identities.py
+      - uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd # v3
+        with:
+          terraform_version: "1.9.8"
+          terraform_wrapper: false
+      - name: Terraform init
+        run: python3 ../.github/scripts/tf_run.py --log "$RUNNER_TEMP/init.log" -- terraform init -input=false -lockfile=readonly
+      - name: Detect drift without publishing raw output
+        # Exit 1 on drift so a scheduled run turns red; only allowlisted settings are published.
+        run: python3 ../.github/scripts/drift_plan.py --directory . --var-file terraform.tfvars --plan "$RUNNER_TEMP/drift.tfplan" --log "$RUNNER_TEMP/drift.log" --summary "$GITHUB_STEP_SUMMARY"
+      - name: Remove temporary plan and logs
+        if: always()
+        run: rm -f "$RUNNER_TEMP/drift.tfplan" "$RUNNER_TEMP/drift.log" "$RUNNER_TEMP/init.log"
