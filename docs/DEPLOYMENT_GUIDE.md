@@ -56,6 +56,8 @@ state 保存在存储账户 `gtsdrtterraform2`。三个 v2 资源组由管理员
 
 GitHub 通过 OIDC 换取 Azure 短期身份，不在工作流中使用长期 Azure Client Secret。plan/test/prod 的 Client ID 必须互不相同。代码中的权限模型是资源组范围的管理权限及容器范围的数据权限，详情见[安全架构](ARCHITECTURE.md#认证和授权)。
 
+plan job（部署、销毁、漂移检测）绑定 `plan-readonly` 环境（仅 main、无人工审批），plan 身份的 OIDC subject 为 `environment:plan-readonly`。旧的 `ref:refs/heads/main` 联邦凭据在至少一次 plan 成功后移除，完成身份收窄。
+
 plan 身份包含刷新 Storage 和 Log Analytics 所需的密钥读取操作，所以“只读”仍可能读取敏感信息。完整计划和原始 Terraform 输出不能公开发布。
 
 ### 工作流 Disabled 时如何启用

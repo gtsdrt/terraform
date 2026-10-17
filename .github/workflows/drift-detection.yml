@@ -27,6 +27,7 @@ env:
 jobs:
   drift:
     name: Drift (${{ matrix.dir }})
+    environment: plan-readonly
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     permissions:

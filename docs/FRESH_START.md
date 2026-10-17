@@ -6,6 +6,8 @@
 
 当前仍存在的 backend 资源组 `Terraform`、存储账户 `gtsdrtterraform2` 和 GitHub 的三个 OIDC 身份继续使用。backend 属于独立的管理基础设施，不能在其承载的业务 state 中自我创建或删除。如果该账户也不存在，必须先另行建立 backend；本初始化脚本会停止，不会自动覆盖或替换它。
 
+plan 身份绑定仓库的 `plan-readonly` 环境（仅 main、无人工审批），其 OIDC subject 为 `environment:plan-readonly`。新建或重建身份时，先在仓库 Settings → Environments 创建该环境并限制 main，再运行初始化脚本；旧的 `ref:refs/heads/main` 凭据在验证一次 plan 成功后移除。
+
 ## 1. 分成三个 Terraform 层
 
 | 目录 | 执行身份 | 创建或管理什么 | state |

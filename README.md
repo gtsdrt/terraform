@@ -70,6 +70,8 @@ GitHub：plan(tf-test, tf) → test apply → test cleanup → production 审批
 
 production 审批人为 `atea-shuangliang` 和 `gtsdrt`，并开启 `prevent_self_review`：谁触发部署，就由另一个账号审批。PR 的 Approve/Merge 和 Actions 的 Review deployments / Approve and deploy 是两种不同操作。禁止自行审批及管理员绕过。
 
+plan job（部署、销毁、漂移检测）绑定 `plan-readonly` 环境（仅 main、无人工审批）；plan 身份的 OIDC subject 为该环境。旧的 `ref:refs/heads/main` 联邦凭据应在一次 plan 成功验证后移除。
+
 计划使用只读身份；两个 apply 身份各自取得对应环境的私钥。计划绑定仓库、提交、run ID、环境、操作目的和销毁范围，24 小时后拒绝执行，密文保留 3 天。公开摘要仅显示资源动作及允许列表中的安全字段，敏感值和任意属性不公开。
 
 完整部署、销毁和恢复使用共享写入队列，生产审批等待也占用队列；plan-only 使用独立只读队列。测试与清理都成功才进入生产审批。取消后的恢复与每 6 小时兜底仅清理 test state、保留组。
