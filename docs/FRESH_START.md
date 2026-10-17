@@ -138,7 +138,7 @@ gh workflow run deploy.yml --repo gtsdrt/terraform --ref main -f mode=plan-only
 gh workflow run deploy.yml --repo gtsdrt/terraform --ref main -f mode=full
 ```
 
-顺序仍是：两个 plan → test apply → test cleanup → production 审批 → prod apply。用 `atea-shuangliang` 在 Actions 的运行 Summary 中查看计划并选择 **Review deployments → production → Approve and deploy**。PR 的 Approve/Merge 不是部署审批，详见[部署说明](DEPLOYMENT_GUIDE.md)。
+顺序仍是：两个 plan → test apply → test cleanup → production 审批 → prod apply。用**非触发账号**（`gtsdrt` 发起则用 `atea-shuangliang`，反之亦然）在 Actions 的运行 Summary 中查看计划并选择 **Review deployments → production → Approve and deploy**。PR 的 Approve/Merge 不是部署审批，详见[部署说明](DEPLOYMENT_GUIDE.md)。
 
 不要重跑旧提交的失败运行，它仍可能使用旧 backend key 或旧恢复脚本。使用合入新配置后的 main 创建新运行。
 

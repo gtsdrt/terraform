@@ -25,7 +25,7 @@ foundation 自定义 plan 角色的 assignable scope 是目标订阅，但角色
 
 AzureRM 创建 Key Vault 时查询同名 deleted vault，生产因此得到 `Microsoft.KeyVault/locations/deletedVaults/read` 和 `Microsoft.KeyVault/locations/operationResults/read`。该订阅范围角色只授予元数据读取，不增加写入或 purge 权限。生产的组范围 Contributor 已包含目标组的 vaults/write，可恢复该组中当前配置名称的软删除 Vault。provider 的生产 Key Vault 自动恢复开启；旧 v1 名称与当前 namespace 不同。恢复在 production 审批后的 apply 中执行，保留已有 Vault 内容；诊断设置需由 Terraform 重建。[Microsoft 对恢复权限和同名限制的说明](https://learn.microsoft.com/en-us/azure/key-vault/general/soft-delete-overview)
 
-plan 因刷新计算属性会读取诊断密钥，仍属于敏感数据身份。production 环境审批保护生产身份及私钥，main Ruleset 保护工作流代码，二者必须同时保持。当前 production 由 `atea-shuangliang` 审批、禁止自行审批和管理员绕过，两个环境仅允许 main。
+plan 因刷新计算属性会读取诊断密钥，仍属于敏感数据身份。production 环境审批保护生产身份及私钥，main Ruleset 保护工作流代码，二者必须同时保持。production 审批人为 `atea-shuangliang` 和 `gtsdrt`，开启 `prevent_self_review`（谁触发由另一人审批），禁止管理员绕过；两个环境仅允许 main。
 
 ### 定位服务主体与 RBAC 成员
 
@@ -97,9 +97,9 @@ Key Vault 保持 RBAC、默认拒绝网络及 purge protection；诊断 Storage 
 | 订阅活动日志诊断 | foundation | Administrative/Alert/Policy/Security → 平台工作区；一个订阅只允许一个 |
 | Defender Standard 三计划 | foundation | 订阅级计费项；`defender_resource_types = []` 可关闭 |
 | `Lock Manager` 自定义角色 | foundation | 仅 `Microsoft.Authorization/locks/read|write|delete`；分配给 prod SP，scope 为 `azlandingzone-v2` |
-| KV / Storage / LA 的 `CanNotDelete` 锁 | `tf` | 在管理员 apply foundation 之后加回，由 Lock Manager 角色授权；destroy 会先删锁 |
+| KV / Storage / LA 的 `CanNotDelete` 锁 | `tf` | 已启用：foundation 授予 Lock Manager 角色，`tf` 管理三把锁；destroy 会先删锁 |
 
-启用顺序：管理员执行 `tf-foundation plan/apply` → 在 `tf` 加回三把锁并部署。检测资源不随 Landing Zone 销毁而中断；平台工作区与活动日志独立于 `tf` state。Defender 计费且要求已注册 `Microsoft.Security`。
+当前已全部启用：foundation 已 apply，3 把锁已在 `tf` 生效；审计 Storage 的日志诊断使用 blob service 级 `StorageRead/Write/Delete`（账户级只有 Capacity/Transaction 指标）。检测资源不随 Landing Zone 销毁而中断；平台工作区与活动日志独立于 `tf` state。Defender 计费且要求已注册 `Microsoft.Security`。
 
 销毁保留 foundation 的组与授权；Key Vault/Log Analytics 不永久 purge。诊断 Storage 属于业务销毁范围，其归档日志不会因上述软删除策略得到保护。未来生产审计需要独立的长期存储生命周期。
 

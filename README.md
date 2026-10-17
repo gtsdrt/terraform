@@ -24,9 +24,9 @@ Azure 网络与 Landing Zone 的 v2 从零重建配置。资源组和限定授�
 
 foundation 由具备资源组创建及 RBAC 管理权限的 Azure 管理员执行，创建 3 个组、3 个自定义角色和 8 个角色分配，以及平台审计工作区、订阅活动日志和 Defender 计划。资源组设有 `prevent_destroy`；日常 GitHub 工作流只操作 prod/test state，不删除 foundation 的资源组或授权。
 
-prod 管理约 48 个资源，test 管理 12 个 network 资源。test 不覆盖 Landing Zone 的实际 apply。hub 子网已按 CIDR 做入站分段并默认拒绝出站 Internet；`modules/network` 的演示网络仍只有 VNet 内 HTTPS 入站，其他内部端口未做业务级最小权限。NSG/VNet Flow Log、Private Endpoint、Azure Firewall 仍未配置。
+prod 管理约 53 个资源，test 管理 14 个 network 资源。test 不覆盖 Landing Zone 的实际 apply。hub 子网已按 CIDR 做入站分段并默认拒绝出站 Internet；`modules/network` 的演示网络仍只有 VNet 内 HTTPS 入站，其他内部端口未做业务级最小权限。NSG/VNet Flow Log、Private Endpoint、Azure Firewall 仍未配置。
 
-检测基线与删除锁改由 foundation 承担：平台 Log Analytics 工作区、订阅活动日志（Administrative/Alert/Policy/Security）、Defender Standard 三计划，以及只含 `Microsoft.Authorization/locks/*` 的 `Lock Manager` 自定义角色。启用顺序：**管理员先 `tf-foundation plan/apply`**（创建检测资源与 Lock Manager 授权），再把 3 把 `CanNotDelete` 锁加回 `tf` 并部署。Defender 是订阅级计费项；活动日志要求订阅上尚无其他诊断设置。详见[安全架构](docs/ARCHITECTURE.md#写入串行与资源生命周期)。
+检测基线与删除锁改由 foundation 承担：平台 Log Analytics 工作区、订阅活动日志（Administrative/Alert/Policy/Security）、Defender Standard 三计划，以及只含 `Microsoft.Authorization/locks/*` 的 `Lock Manager` 自定义角色。当前已全部启用：foundation 已 apply，3 把 `CanNotDelete` 锁已在 `tf` 中生效；审计 Storage 的日志诊断使用 blob service 级 `StorageRead/Write/Delete`。Defender 是订阅级计费项；活动日志要求订阅上尚无其他诊断设置。详见[安全架构](docs/ARCHITECTURE.md#写入串行与资源生命周期)。
 
 ## 从零初始化
 
@@ -66,7 +66,7 @@ gh workflow run deploy.yml --repo gtsdrt/terraform --ref main -f mode=full
 GitHub：plan(tf-test, tf) → test apply → test cleanup → production 审批 → prod apply
 ```
 
-推荐由 `gtsdrt` 合入代码/发起部署，`atea-shuangliang` 审批 production。PR 的 Approve/Merge 和 Actions 的 Review deployments / Approve and deploy 是两种不同操作。production 禁止自行审批及管理员绕过。
+production 审批人为 `atea-shuangliang` 和 `gtsdrt`，并开启 `prevent_self_review`：谁触发部署，就由另一个账号审批。PR 的 Approve/Merge 和 Actions 的 Review deployments / Approve and deploy 是两种不同操作。禁止自行审批及管理员绕过。
 
 计划使用只读身份；两个 apply 身份各自取得对应环境的私钥。计划绑定仓库、提交、run ID、环境、操作目的和销毁范围，24 小时后拒绝执行，密文保留 3 天。公开摘要仅显示资源动作及允许列表中的安全字段，敏感值和任意属性不公开。
 
