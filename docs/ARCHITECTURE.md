@@ -89,9 +89,17 @@ Key Vault 保持 RBAC、默认拒绝网络及 purge protection；诊断 Storage 
 
 网络侧：hub 的三个常规子网按 CIDR 做入站分段（不再用整体 `VirtualNetwork` 放行），并显式拒绝出站 Internet；`modules/network` 的演示网络只保留 VNet 内 HTTPS 入站。NSG/VNet Flow Log、Private Endpoint、Azure Firewall + UDR 仍未配置，属于后续待补项。
 
-检测基线（订阅活动日志 + Defender Standard）与三个 `CanNotDelete` 管理锁**当前未启用**，原因是权限模型不匹配：prod SP 只有 `terraform-prod-v2`、`azlandingzone-v2` 的资源组 Contributor，没有订阅级写权限；且 Contributor 的 notActions 含 `Microsoft.Authorization/*/Write`，不能管理锁。直接 apply 会在这些资源上 `AuthorizationFailed`。启用顺序：
-1. 在 foundation 增加仅含 `Microsoft.Authorization/locks/*` 的自定义角色，分配给 prod SP（两个生产组 scope），再在 `tf` 加回锁；
-2. 活动日志与 Defender 属于订阅级资源，应由 foundation（管理员执行）承接，并配套一个长期存在的平台 Log Analytics 工作区，避免随 Landing Zone 销毁而中断审计。Defender Standard 计费且要求已注册 `Microsoft.Security`。
+检测基线与删除锁由 **foundation** 承担，而不是工作负载 root。原因：prod SP 只有两个生产组的 Contributor，没有订阅级写权限；且 Contributor 的 notActions 含 `Microsoft.Authorization/*/Write`，不能管理锁。
+
+| 能力 | 归属 | 说明 |
+|---|---|---|
+| 平台审计 Log Analytics 工作区 | foundation | 位于 `azlandingzone-v2` 组；保留 90 天、每日配额 10 GB、禁用本地（共享密钥）认证 |
+| 订阅活动日志诊断 | foundation | Administrative/Alert/Policy/Security → 平台工作区；一个订阅只允许一个 |
+| Defender Standard 三计划 | foundation | 订阅级计费项；`defender_resource_types = []` 可关闭 |
+| `Lock Manager` 自定义角色 | foundation | 仅 `Microsoft.Authorization/locks/read|write|delete`；分配给 prod SP，scope 为 `azlandingzone-v2` |
+| KV / Storage / LA 的 `CanNotDelete` 锁 | `tf` | 在管理员 apply foundation 之后加回，由 Lock Manager 角色授权；destroy 会先删锁 |
+
+启用顺序：管理员执行 `tf-foundation plan/apply` → 在 `tf` 加回三把锁并部署。检测资源不随 Landing Zone 销毁而中断；平台工作区与活动日志独立于 `tf` state。Defender 计费且要求已注册 `Microsoft.Security`。
 
 销毁保留 foundation 的组与授权；Key Vault/Log Analytics 不永久 purge。诊断 Storage 属于业务销毁范围，其归档日志不会因上述软删除策略得到保护。未来生产审计需要独立的长期存储生命周期。
 

@@ -61,3 +61,33 @@ run "fresh_groups_and_scoped_roles" {
     error_message = "Deleted-vault lookup must grant metadata reads only; never purge or recovery writes."
   }
 }
+
+run "platform_detection_and_lock_role" {
+  command = plan
+
+  override_resource {
+    target = azurerm_role_definition.lock_manager
+    values = { role_definition_resource_id = "/subscriptions/11111111-1111-1111-1111-111111111111/providers/Microsoft.Authorization/roleDefinitions/88888888-8888-8888-8888-888888888888" }
+  }
+
+  assert {
+    condition     = toset(azurerm_role_definition.lock_manager.permissions[0].actions) == toset(["Microsoft.Authorization/locks/read", "Microsoft.Authorization/locks/write", "Microsoft.Authorization/locks/delete"]) && length(coalesce(azurerm_role_definition.lock_manager.permissions[0].data_actions, [])) == 0
+    error_message = "Lock role must grant locks only; never RBAC or other Authorization writes."
+  }
+  assert {
+    condition     = toset([for key, role in azurerm_role_assignment.lock_manager : key]) == toset(["platform"]) && alltrue([for key, role in azurerm_role_assignment.lock_manager : role.principal_id == var.principal_ids.prod && role.scope == "/subscriptions/${var.subscription_id}/resourceGroups/${azurerm_resource_group.workload[key].name}"])
+    error_message = "Lock role must be assigned to prod only, scoped to azlandingzone-v2."
+  }
+  assert {
+    condition     = azurerm_monitor_diagnostic_setting.subscription_activity.target_resource_id == "/subscriptions/${var.subscription_id}"
+    error_message = "Subscription activity log must be exported from the subscription to the platform workspace."
+  }
+  assert {
+    condition     = azurerm_log_analytics_workspace.platform.daily_quota_gb == 10 && azurerm_log_analytics_workspace.platform.retention_in_days == 90 && azurerm_log_analytics_workspace.platform.local_authentication_enabled == false
+    error_message = "The platform workspace must keep a quota, 90-day retention and no local (shared key) authentication."
+  }
+  assert {
+    condition     = toset([for key, plan in azurerm_security_center_subscription_pricing.this : key]) == toset(["Arm", "KeyVaults", "StorageAccounts"]) && alltrue([for key, plan in azurerm_security_center_subscription_pricing.this : plan.tier == "Standard"])
+    error_message = "Defender plans must be the reviewed three, all Standard."
+  }
+}
