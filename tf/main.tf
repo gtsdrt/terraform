@@ -56,6 +56,7 @@ output "azlandingzone" {
     log_analytics_workspace = module.azlandingzone.log_analytics_workspace_id
     key_vault_name          = module.azlandingzone.key_vault_name
     storage_account_name    = module.azlandingzone.storage_account_name
+    security_baseline       = module.azlandingzone.security_baseline
   }
 }
 
