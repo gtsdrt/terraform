@@ -90,4 +90,8 @@ run "platform_detection_and_lock_role" {
     condition     = toset([for key, plan in azurerm_security_center_subscription_pricing.this : key]) == toset(["Arm", "KeyVaults", "StorageAccounts"]) && alltrue([for key, plan in azurerm_security_center_subscription_pricing.this : plan.tier == "Standard"])
     error_message = "Defender plans must be the reviewed three, all Standard."
   }
+  assert {
+    condition     = azurerm_security_center_subscription_pricing.this["StorageAccounts"].subplan == "DefenderForStorageV2" && azurerm_security_center_subscription_pricing.this["KeyVaults"].subplan == "PerKeyVault" && azurerm_security_center_subscription_pricing.this["Arm"].subplan == "PerSubscription"
+    error_message = "Sub-plans must be explicit; otherwise every plan replaces the pricing resource."
+  }
 }

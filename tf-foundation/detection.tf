@@ -57,9 +57,22 @@ resource "azurerm_monitor_diagnostic_setting" "subscription_activity" {
 
 # Defender for Cloud 的计划是订阅级、且计费。默认只开数据面三类 + 订阅控制面；
 # defender_resource_types = [] 可全部关闭而不影响活动日志。
+#
+# Azure 会为 Standard 计划回填一个默认 subPlan；不显式写入会导致每次 plan
+# 都出现 `subplan = ... -> null # forces replacement` 的永久漂移。
+# 这里为默认三类写入实际默认值，其它类型留 null（Azure 自行决定）。
+locals {
+  defender_sub_plans = {
+    StorageAccounts = "DefenderForStorageV2"
+    KeyVaults       = "PerKeyVault"
+    Arm             = "PerSubscription"
+  }
+}
+
 resource "azurerm_security_center_subscription_pricing" "this" {
   for_each = var.defender_resource_types
 
   resource_type = each.value
   tier          = "Standard"
+  subplan       = lookup(local.defender_sub_plans, each.value, null)
 }
