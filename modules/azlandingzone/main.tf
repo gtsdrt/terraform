@@ -265,10 +265,29 @@ resource "azurerm_monitor_diagnostic_setting" "key_vault" {
   }
 }
 
-# ── 删除保护（暂缓）──
-# 管理锁需要 `Microsoft.Authorization/locks/*`；prod SP 只有资源组 Contributor，
-# 而 Contributor 的 notActions 含 `Microsoft.Authorization/*/Write`，无法创建/删除锁。
-# 重新启用前，先在 foundation 增加仅含 `Microsoft.Authorization/locks/*` 的自定义角色，
-# 并分配给 prod SP（scope = terraform-prod-v2、azlandingzone-v2），再做一次 prod apply。
-# 待加锁目标：azurerm_key_vault.this、azurerm_storage_account.diagnostics、
-#             azurerm_log_analytics_workspace.this。
+# ── 删除保护 ──
+# foundation 的 Lock Manager 自定义角色只授予 `Microsoft.Authorization/locks/*`，
+# 并分配给 prod SP（scope = azlandingzone-v2）。因此 Contributor 身份可以管理这三把锁，
+# 但仍不能写 RBAC 或其它 Authorization 资源。
+# 用 management lock 而不是 lifecycle.prevent_destroy：锁由 Terraform 管理，
+# destroy 时 Terraform 会先删除锁再删除资源（隐式依赖），所以销毁流程仍然可用。
+resource "azurerm_management_lock" "key_vault" {
+  name       = "lock-do-not-delete"
+  scope      = azurerm_key_vault.this.id
+  lock_level = "CanNotDelete"
+  notes      = "零信任基线：Key Vault 不可直接删除。terraform destroy 会先移除本锁。"
+}
+
+resource "azurerm_management_lock" "storage" {
+  name       = "lock-do-not-delete"
+  scope      = azurerm_storage_account.diagnostics.id
+  lock_level = "CanNotDelete"
+  notes      = "零信任基线：审计日志落地点不可直接删除。terraform destroy 会先移除本锁。"
+}
+
+resource "azurerm_management_lock" "log_analytics" {
+  name       = "lock-do-not-delete"
+  scope      = azurerm_log_analytics_workspace.this.id
+  lock_level = "CanNotDelete"
+  notes      = "零信任基线：集中日志工作区不可直接删除。terraform destroy 会先移除本锁。"
+}
