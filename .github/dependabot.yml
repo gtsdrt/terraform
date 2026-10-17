@@ -1,0 +1,36 @@
+version: 2
+
+updates:
+  # 工作流 action 全部固定完整 SHA；由 Dependabot 提出升级 PR，评审后更新。
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "chore(actions)"
+
+  # Terraform provider 锁定在 .terraform.lock.hcl；升级必须走 PR 与 validate。
+  - package-ecosystem: "terraform"
+    directory: "/tf"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 3
+    commit-message:
+      prefix: "chore(tf)"
+
+  - package-ecosystem: "terraform"
+    directory: "/tf-test"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 3
+    commit-message:
+      prefix: "chore(tf-test)"
+
+  - package-ecosystem: "terraform"
+    directory: "/tf-foundation"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 3
+    commit-message:
+      prefix: "chore(tf-foundation)"

@@ -85,7 +85,11 @@ PR 检查不获得 Azure 凭据、OIDC 或 state。foundation mock 测试验证�
 
 test apply 完成或失败后立即清理，测试与清理均成功才进入生产审批。独立恢复在运行结束后检查是否尝试过 test 部署，并每 6 小时兜底；只 checkout main、使用 test 身份与 test state。恢复不读取触发运行的代码或 artifact，并拒绝其他仓库事件。
 
-Key Vault 保持 RBAC、默认拒绝网络及 purge protection；诊断 Storage 默认 Deny、仅放行 Azure 可信服务。普通业务身份的 secret 数据权限和私网访问需另行配置，test 仍只验证 network。
+Key Vault 保持 RBAC、默认拒绝网络及 purge protection；诊断 Storage 默认 Deny、仅放行 Azure 可信服务，并关闭共享密钥、启用自身诊断与 `CanNotDelete` 锁。Log Analytics 设每日摄入配额并为三个落地资源加锁；订阅活动日志（Administrative/Alert/Policy/Security）导出到该工作区，Defender for Cloud 开启 StorageAccounts/KeyVaults/Arm 三个 Standard 计划。普通业务身份的 secret 数据权限和私网访问需另行配置，test 仍只验证 network。
+
+网络侧：hub 的三个常规子网按 CIDR 做入站分段（不再用整体 `VirtualNetwork` 放行），并显式拒绝出站 Internet；`modules/network` 的演示网络只保留 VNet 内 HTTPS 入站。NSG/VNet Flow Log、Private Endpoint、Azure Firewall + UDR 仍未配置，属于后续待补项。
+
+检测与 Defender 是订阅级资源，当前与 Landing Zone 同处 `tf` root：执行 `destroy scope=azlandingzone/all` 会一并移除它们（Defender 退回 Free、活动日志停止导出）。需要让安全基线独立于 Landing Zone 生命周期时，应把 `modules/azlandingzone/detection.tf` 迁到 foundation 或独立 root/state。Defender Standard 是计费项，且要求订阅已注册 `Microsoft.Security`。
 
 销毁保留 foundation 的组与授权；Key Vault/Log Analytics 不永久 purge。诊断 Storage 属于业务销毁范围，其归档日志不会因上述软删除策略得到保护。未来生产审计需要独立的长期存储生命周期。
 

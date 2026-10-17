@@ -29,7 +29,9 @@ __pycache__/
 *.tfvars.local.json
 tf-foundation/imports.local.tf
 *.pem
-!.github/plan-keys/*.pem
+# 只放行计划加密用的两个公钥证书；不要用 *.pem 通配，避免私钥被误提交。
+!.github/plan-keys/tf.pem
+!.github/plan-keys/tf-test.pem
 *.key
 *.p12
 *.pfx

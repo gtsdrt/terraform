@@ -30,3 +30,36 @@ run "fresh_namespace_avoids_deleted_names" {
     error_message = "The diagnostic account must avoid the deleted account name and respect Azure constraints."
   }
 }
+
+run "hardened_detection_and_network_baseline" {
+  command = plan
+
+  assert {
+    condition     = output.azlandingzone.security_baseline.storage_shared_key_enabled == false
+    error_message = "The audit storage account must disable shared key access."
+  }
+  assert {
+    condition     = output.azlandingzone.security_baseline.log_analytics_daily_quota_gb == 10
+    error_message = "Log Analytics must keep a daily ingestion quota to bound cost and log-flooding risk."
+  }
+  assert {
+    condition     = output.azlandingzone.security_baseline.management_lock_levels.key_vault == "CanNotDelete" && output.azlandingzone.security_baseline.management_lock_levels.storage == "CanNotDelete" && output.azlandingzone.security_baseline.management_lock_levels.log_analytics == "CanNotDelete"
+    error_message = "Key Vault, audit storage and Log Analytics must all carry a CanNotDelete lock."
+  }
+  assert {
+    condition     = alltrue([for source in values(output.azlandingzone.security_baseline.inbound_allow_sources) : can(cidrnetmask(source))])
+    error_message = "Inbound allows must segment by subnet CIDR, not the whole-VNet VirtualNetwork tag."
+  }
+  assert {
+    condition     = length(output.azlandingzone.security_baseline.outbound_internet_denies) == 3
+    error_message = "Every workload NSG must explicitly deny Internet egress."
+  }
+  assert {
+    condition     = toset(output.azlandingzone.security_baseline.defender_plans) == toset(["Arm", "KeyVaults", "StorageAccounts"])
+    error_message = "Defender for Cloud must enable the three reviewed plans (StorageAccounts/KeyVaults/Arm)."
+  }
+  assert {
+    condition     = output.azlandingzone.security_baseline.subscription_activity_target == "/subscriptions/11111111-1111-1111-1111-111111111111"
+    error_message = "Subscription activity log must be exported to the central Log Analytics workspace."
+  }
+}

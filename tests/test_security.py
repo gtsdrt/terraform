@@ -269,5 +269,21 @@ class SecurityTests(unittest.TestCase):
                                            capture_output=True).returncode, 0)
 
 
+class GitIgnoreTests(unittest.TestCase):
+    """Only the two reviewed plan certificates may bypass the *.pem ignore rule."""
+
+    def ignored(self, path):
+        return subprocess.run(["git", "-C", str(ROOT), "check-ignore", "-q", path],
+                              capture_output=True).returncode == 0
+
+    def test_plan_certificates_are_visible(self):
+        for name in ("tf.pem", "tf-test.pem"):
+            self.assertFalse(self.ignored(f".github/plan-keys/{name}"))
+
+    def test_other_pem_files_stay_ignored(self):
+        for name in ("private.pem", "tf-key.pem", "tf-test-key.pem", "new.pem"):
+            self.assertTrue(self.ignored(f".github/plan-keys/{name}"))
+
+
 if __name__ == "__main__":
     unittest.main()

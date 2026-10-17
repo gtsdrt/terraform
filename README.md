@@ -24,7 +24,9 @@ Azure 网络与 Landing Zone 的 v2 从零重建配置。资源组和限定授�
 
 foundation 由具备资源组创建及 RBAC 管理权限的 Azure 管理员执行，创建 3 个组、2 个自定义角色和 7 个角色分配。资源组设有 `prevent_destroy`；日常 GitHub 工作流只操作 prod/test state，不删除 foundation 的资源组或授权。
 
-prod 管理 37 个业务资源，test 管理 12 个 network 资源。test 不覆盖 Landing Zone 的实际 apply。NSG 的现有 HTTPS 规则不代表其他内部端口已被拒绝；网络最小权限需按业务需求另行完善。
+prod 管理约 55 个资源，test 管理 12 个 network 资源。test 不覆盖 Landing Zone 的实际 apply。hub 子网已按 CIDR 做入站分段并默认拒绝出站 Internet；`modules/network` 的演示网络仍只有 VNet 内 HTTPS 入站，其他内部端口未做业务级最小权限。NSG/VNet Flow Log、Private Endpoint、Azure Firewall 仍未配置。
+
+检测基线与 Defender 属于订阅级资源，当前随 Landing Zone 一起销毁；Defender Standard 计费且要求订阅已注册 `Microsoft.Security`，详见[安全架构](docs/ARCHITECTURE.md#写入串行与资源生命周期)。
 
 ## 从零初始化
 
