@@ -22,7 +22,7 @@ Azure 网络与 Landing Zone 的 v2 从零重建配置。资源组和限定授�
 
 现有 state 账户 `gtsdrtterraform2`、backend 资源组 `Terraform` 和三个 OIDC 身份保留。旧 state 文件原样保留；新初始化脚本只创建缺失的 v2 文件，禁止覆盖。业务名称使用包含订阅与重建代号的稳定后缀，避开旧 v1 名称。生产开启当前配置名称的 Key Vault 软删除恢复，以支持销毁后的同名部署；恢复保留 Vault 内容并经过 production 审批，purge 仍关闭。
 
-foundation 由具备资源组创建及 RBAC 管理权限的 Azure 管理员执行，创建 3 个组、3 个自定义角色和 9 个角色分配，以及平台审计工作区、订阅活动日志和 Defender 计划。资源组设有 `prevent_destroy`；日常 GitHub 工作流只操作 prod/test state，不删除 foundation 的资源组或授权。
+foundation 由具备资源组创建及 RBAC 管理权限的 Azure 管理员执行，创建 3 个组、3 个自定义角色和 8 个角色分配，以及平台审计工作区、订阅活动日志和 Defender 计划。资源组设有 `prevent_destroy`；日常 GitHub 工作流只操作 prod/test state，不删除 foundation 的资源组或授权。
 
 prod 管理约 48 个资源，test 管理 12 个 network 资源。test 不覆盖 Landing Zone 的实际 apply。hub 子网已按 CIDR 做入站分段并默认拒绝出站 Internet；`modules/network` 的演示网络仍只有 VNet 内 HTTPS 入站，其他内部端口未做业务级最小权限。NSG/VNet Flow Log、Private Endpoint、Azure Firewall 仍未配置。
 
