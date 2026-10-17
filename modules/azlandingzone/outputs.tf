@@ -35,11 +35,6 @@ output "security_baseline" {
   value = {
     storage_shared_key_enabled   = azurerm_storage_account.diagnostics.shared_access_key_enabled
     log_analytics_daily_quota_gb = azurerm_log_analytics_workspace.this.daily_quota_gb
-    management_lock_levels = {
-      key_vault     = azurerm_management_lock.key_vault.lock_level
-      storage       = azurerm_management_lock.storage.lock_level
-      log_analytics = azurerm_management_lock.log_analytics.lock_level
-    }
     inbound_allow_sources = {
       for name, rule in azurerm_network_security_rule.baseline : name => rule.source_address_prefix
       if rule.direction == "Inbound" && rule.access == "Allow" && rule.source_address_prefix != "AzureLoadBalancer"
@@ -48,7 +43,5 @@ output "security_baseline" {
       for name, rule in azurerm_network_security_rule.baseline : name => rule.destination_address_prefix
       if rule.direction == "Outbound" && rule.access == "Deny" && rule.destination_address_prefix == "Internet"
     }
-    defender_plans               = sort([for key, plan in azurerm_security_center_subscription_pricing.this : key])
-    subscription_activity_target = azurerm_monitor_diagnostic_setting.subscription_activity.target_resource_id
   }
 }
