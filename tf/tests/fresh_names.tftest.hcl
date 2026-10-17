@@ -50,4 +50,8 @@ run "hardened_network_and_storage_baseline" {
     condition     = length(output.azlandingzone.security_baseline.outbound_internet_denies) == 3
     error_message = "Every workload NSG must explicitly deny Internet egress."
   }
+  assert {
+    condition     = output.azlandingzone.security_baseline.management_lock_levels.key_vault == "CanNotDelete" && output.azlandingzone.security_baseline.management_lock_levels.storage == "CanNotDelete" && output.azlandingzone.security_baseline.management_lock_levels.log_analytics == "CanNotDelete"
+    error_message = "Key Vault, audit storage and Log Analytics must all carry a CanNotDelete lock."
+  }
 }
