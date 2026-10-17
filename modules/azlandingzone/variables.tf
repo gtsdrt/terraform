@@ -63,6 +63,17 @@ variable "log_analytics_daily_quota_gb" {
   }
 }
 
+variable "flow_log_retention_days" {
+  description = "VNet Flow Log 保留天数（1-365）"
+  type        = number
+  default     = 90
+
+  validation {
+    condition     = var.flow_log_retention_days >= 1 && var.flow_log_retention_days <= 365
+    error_message = "flow_log_retention_days 必须在 1-365 之间。"
+  }
+}
+
 variable "key_vault_name" {
   description = "Key Vault 名称（全局唯一，3-24 位字母数字连字符）；留空则自动生成"
   type        = string

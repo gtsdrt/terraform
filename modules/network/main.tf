@@ -63,3 +63,22 @@ resource "azurerm_subnet_network_security_group_association" "main" {
   subnet_id                 = azurerm_subnet.main[each.key].id
   network_security_group_id = azurerm_network_security_group.main[each.value.vnet].id
 }
+
+# VNet Flow Log（计数由 plan 时已知的布尔值决定；test 环境关闭）
+resource "azurerm_network_watcher_flow_log" "main" {
+  count = var.enable_flow_logs ? var.vnet_count : 0
+
+  name                 = format("fl-%02d", count.index + 1)
+  network_watcher_name = "NetworkWatcher_${data.azurerm_resource_group.main.location}"
+  resource_group_name  = "NetworkWatcherRG"
+  location             = data.azurerm_resource_group.main.location
+  target_resource_id   = azurerm_virtual_network.main[count.index].id
+  storage_account_id   = var.flow_log_storage_account_id
+  enabled              = true
+  version              = 2
+
+  retention_policy {
+    enabled = true
+    days    = var.flow_log_retention_days
+  }
+}

@@ -22,6 +22,10 @@ output "storage_account_name" {
   value = azurerm_storage_account.diagnostics.name
 }
 
+output "storage_account_id" {
+  value = azurerm_storage_account.diagnostics.id
+}
+
 output "key_vault_id" {
   value = azurerm_key_vault.this.id
 }
@@ -48,5 +52,7 @@ output "security_baseline" {
       for name, rule in azurerm_network_security_rule.baseline : name => rule.destination_address_prefix
       if rule.direction == "Outbound" && rule.access == "Deny" && rule.destination_address_prefix == "Internet"
     }
+    flow_log_enabled        = azurerm_network_watcher_flow_log.hub.enabled
+    flow_log_retention_days = azurerm_network_watcher_flow_log.hub.retention_policy[0].days
   }
 }
