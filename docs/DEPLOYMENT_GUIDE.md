@@ -9,7 +9,7 @@
 1. 用 `gtsdrt` 登录，确认待部署变更已合入 main、PR 检查通过，且没有尚未完成的完整部署或销毁。
 2. 进入 **Actions → Terraform Deploy → Run workflow**，选择 **main / plan-only**。查看两个 plan 的变更摘要。
 3. 预览符合预期后，以 `gtsdrt` 创建 **main / full** 运行。检查该 full 运行中的新摘要；它会重新生成准确计划。
-4. 等待两个 plan、test apply 和 test cleanup 成功。以 `atea-shuangliang` 打开同一运行，选择 **Review deployments → production → Approve and deploy**。
+4. 等待两个 plan、test apply 和 test cleanup 成功。用**非触发账号**打开同一运行（如 `gtsdrt` 发起则由 `atea-shuangliang` 审批），选择 **Review deployments → production → Approve and deploy**。
 5. 等待 `deploy-prod` 和整条运行显示 success，按第 12 节验收。test 组保留、组内临时资源为空是正常结果。
 
 工作流若显示 Disabled，按下方启用步骤恢复。foundation 已完成后，日常部署继续使用现有资源组和 state；初始化脚本不属于每次 full 的执行步骤。
@@ -24,18 +24,18 @@
 
 **PR 页面的 Approve 不会批准生产部署。** 看到 `Merge pull request` 表示当前位于 PR 页面，应进入 Actions 的具体运行页面查看部署审批请求。
 
-当前仓库的 production 审批人是 `atea-shuangliang`，禁止自行审批，且管理员不能绕过。test 环境当前没有人工审批要求；两个环境均只接受 main 分支。
+当前仓库的 production 审批人为 `atea-shuangliang` 和 `gtsdrt`，并开启 `prevent_self_review`：**谁触发部署，就由另一个账号审批**；管理员不能绕过。test 环境当前没有人工审批要求；两个环境均只接受 main 分支。
 
 建议的账号分工：
 
 | 账号 | 建议操作 |
 |---|---|
-| `gtsdrt` | 提交变更、在 PR 审查通过后合入代码、手动发起 full 部署或销毁 |
-| `atea-shuangliang` | 审查 `gtsdrt` 的 PR；在 Actions 中审查并批准生产计划 |
+| `gtsdrt` | 提交变更、合入代码、手动发起 full 部署或销毁；审批 `atea-shuangliang` 触发的运行 |
+| `atea-shuangliang` | 审查 PR；在 Actions 中审批 `gtsdrt` 触发的生产计划 |
 
 PR 作者不能批准自己的 PR；当前 main 还要求代码所有者审查、一次有效批准及最后一次推送后的批准。新增提交会撤销旧批准，需要重新审查。
 
-如果 `atea-shuangliang` 自己合入了会触发部署的变更或发起 full 运行，该运行也由这个账号发起，唯一生产审批人将无法自行批准。保持当前保护设置的处理方法是：取消该运行，再由 `gtsdrt` 创建一次新的 full 运行，然后由 `atea-shuangliang` 审批。切换浏览器登录账号不会改变已创建运行的发起人。
+`prevent_self_review` 会隐藏触发账号自己的审批入口：谁合入/发起，就由另一个审批账号批准即可，两个账号互为备份。如果两个账号都看不到审批入口，检查该运行的发起账号（`gh run view <id> --json triggering_actor`）与 production 审批人列表是否一致。切换浏览器登录账号不会改变已创建运行的发起人。
 
 ## 2. 工作流、环境与身份
 
@@ -108,7 +108,7 @@ flowchart TD
 2. 等待三个必需检查通过：`Terraform Validate (tf)`、`Terraform Validate (tf-test)`、`Security Checks`。新增 `Terraform Validate (tf-foundation)`，foundation 的 mock 权限测试也纳入必需的 Security Checks。
 3. 审查者进入 PR 的 **Files changed**，检查差异，点击 **Review changes → Approve → Submit review**。
 4. 解决所有审查讨论；如果又推送了提交，等待检查并重新获得批准。
-5. 有合并权限的账号完成合入。对会触发部署的变更，建议由 `gtsdrt` 合入，让 `atea-shuangliang` 保持独立生产审批人的角色。
+5. 有合并权限的账号完成合入。由于 `prevent_self_review`，会触发部署的合并由另一审批账号审批，两个账号互为备份。
 
 PR 检查也适用于 fork 和仅修改文档的 PR。它们不会接触 Azure 凭据、读取生产 state 或获得 OIDC 权限，也不会上传部署计划。
 
@@ -153,7 +153,7 @@ gh workflow run deploy.yml --repo gtsdrt/terraform --ref main -f mode=full
 
 ### 在哪里批准生产
 
-1. 用 `atea-shuangliang` 登录 GitHub。
+1. 用**未触发该运行**的审批账号登录 GitHub（`gtsdrt` 发起则用 `atea-shuangliang`，反之亦然）。
 2. 进入 **Actions → Terraform Deploy → 对应运行 → Summary**。确认工作流名称、提交、发起账号和 `deploy-prod` 等待状态。
 3. 查看两个 plan job 发布的资源动作、安全设置及生产计划截止时间。特别检查 `delete` 和组合的 `delete/create`，后者表示替换资源。
 4. 点击 **Review deployments**，勾选 **production**，按需要填写审查意见。
@@ -259,14 +259,14 @@ Key Vault 销毁后名称在软删除保留期内仍被占用。当前生产配�
 
 2026-10-08 已实际验证[恢复部署 37748553797](https://github.com/gtsdrt/terraform/actions/runs/37748553797)和[后续生产全量销毁 37749590433](https://github.com/gtsdrt/terraform/actions/runs/37749590433)成功。这验证了当前恢复和销毁路径，不代表任意未来运行都不会失败：权限收回、组/名称/区域变化、state 丢失、Azure 临时冲突、配额或 provider 变更仍需按实际错误处理。[完整验证记录](DEPLOYMENT_INCIDENT_2026-10-08.md#修复后的验证结果)
 
-后续每次使用最新 main 新建 `plan-only / full` 运行，审查本次计划，保留 foundation、backend 和业务 state。仅回收 network 时选 `scope=network`，以保留 Landing Zone 的 Vault、workspace 和诊断存储；目标删除范围仍以审批前的 destroy 清单为准。生产发起/合入账号使用 `gtsdrt`，审批账号使用 `atea-shuangliang`。
+后续每次使用最新 main 新建 `plan-only / full` 运行，审查本次计划，保留 foundation、backend 和业务 state。仅回收 network 时选 `scope=network`，以保留 Landing Zone 的 Vault、workspace 和诊断存储；目标删除范围仍以审批前的 destroy 清单为准。生产部署由任一审批账号发起，另一个账号审批（`prevent_self_review`）。
 
 ## 11. 常见问题与处理
 
 | 现象 | 检查与处理 |
 |---|---|
 | 只有 Merge pull request，没有 deploy 按钮 | 当前在 PR 页面；进入 Actions 的具体运行 Summary |
-| reviewer 无法批准 production | 进入具体运行的 Summary，确认浏览器登录 atea-shuangliang；若该运行也由此账号发起，取消等待运行后以 gtsdrt 新建 full，再由 atea 审批。禁止自行审批，不使用管理员绕过 |
+| reviewer 无法批准 production | 进入具体运行的 Summary，用 `gh run view <id> --json triggering_actor` 确认发起账号；`prevent_self_review` 下用另一个审批账号批准。禁止自行审批，不使用管理员绕过 |
 | 计划过期 / artifact 不存在 | 新建 full/destroy 运行并审查新计划；不复用或手动替换旧 artifact |
 | 测试失败或清理失败 | 生产会停止；先诊断错误，再检查恢复任务，修复后创建新运行 |
 | 整条运行取消后测试资源仍存在 | 正常取消可能中断清理；等待独立恢复，或确认写入队列释放后手动运行 Test Recovery |
@@ -294,7 +294,7 @@ Key Vault 销毁后名称在软删除保留期内仍被占用。当前生产配�
 1. 在 Actions 确认 plan、deploy-test、cleanup-test、deploy-prod 全部成功，并核对提交 SHA。
 2. 使用相应 Azure 只读权限检查两个生产资源组的资源，以及测试资源组中无临时受管资源。
 3. 检查 Key Vault 的诊断配置、目标 Log Analytics/Storage，以及实际审计事件是否到达。Terraform apply 成功不等于所有日志路径已经完成业务验证。
-4. 检查安全基线：三个 NSG 的入站分段与出站 Internet 拒绝规则、诊断 Storage 的共享密钥关闭、Log Analytics 每日配额。管理锁、平台审计工作区、订阅活动日志与 Defender 由 foundation 承担：需管理员先 `tf-foundation plan/apply`，再把 3 把锁加回 `tf`；未完成 foundation apply 前不要把它们当作已生效项验收。
+4. 检查安全基线（当前均已启用）：三个 NSG 的入站分段与出站 Internet 拒绝规则、诊断 Storage 的共享密钥关闭和 blob service 级 `StorageRead/Write/Delete` 诊断、Log Analytics 每日配额、3 把 `CanNotDelete` 锁、平台审计工作区/订阅活动日志、Defender 三个 Standard 计划。任一为「未生效」都按失败处理并回滚该次变更。
 5. 检查下一次 Test Recovery 的结果；若仅是恢复分页错误，按第 9 节处理，不据此推断生产部署失败。
 
 ```bash
