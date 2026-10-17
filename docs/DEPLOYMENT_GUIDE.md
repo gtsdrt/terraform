@@ -294,7 +294,7 @@ Key Vault 销毁后名称在软删除保留期内仍被占用。当前生产配�
 1. 在 Actions 确认 plan、deploy-test、cleanup-test、deploy-prod 全部成功，并核对提交 SHA。
 2. 使用相应 Azure 只读权限检查两个生产资源组的资源，以及测试资源组中无临时受管资源。
 3. 检查 Key Vault 的诊断配置、目标 Log Analytics/Storage，以及实际审计事件是否到达。Terraform apply 成功不等于所有日志路径已经完成业务验证。
-4. 检查安全基线：三个 NSG 的入站分段与出站 Internet 拒绝规则、诊断 Storage 的共享密钥关闭与 `CanNotDelete` 锁、Log Analytics 每日配额、订阅活动日志诊断、Defender 三个 Standard 计划。任一为「未生效」都按失败处理并回滚该次变更。
+4. 检查安全基线：三个 NSG 的入站分段与出站 Internet 拒绝规则、诊断 Storage 的共享密钥关闭、Log Analytics 每日配额。管理锁、订阅活动日志与 Defender 目前**未启用**（prod SP 缺少订阅级/Authorization 写权限），不要把它们当作已生效项验收。
 5. 检查下一次 Test Recovery 的结果；若仅是恢复分页错误，按第 9 节处理，不据此推断生产部署失败。
 
 ```bash

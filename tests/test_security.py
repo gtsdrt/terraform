@@ -285,5 +285,20 @@ class GitIgnoreTests(unittest.TestCase):
             self.assertTrue(self.ignored(f".github/plan-keys/{name}"))
 
 
+class ScopeSeparationTests(unittest.TestCase):
+    """The workload roots run as a resource-group Contributor; subscription scoped
+    resources must stay in the admin-owned foundation layer (see ARCHITECTURE.md)."""
+
+    def workload_files(self):
+        for root in (ROOT / "tf", ROOT / "modules"):
+            yield from root.rglob("*.tf")
+
+    def test_workload_roots_have_no_subscription_scoped_resources(self):
+        for path in self.workload_files():
+            text = path.read_text(encoding="utf-8")
+            self.assertNotIn("azurerm_security_center_subscription_pricing", text, path)
+            self.assertNotRegex(text, r'target_resource_id\s*=\s*"/subscriptions/', path)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -63,31 +63,6 @@ variable "log_analytics_daily_quota_gb" {
   }
 }
 
-variable "defender_resource_types" {
-  description = <<-EOT
-    开启 Microsoft Defender for Cloud **Standard** 计划的资源类型。默认三类数据面 + 订阅控制面。
-
-    ⚠️ 两个重要前提：
-      1. 这是**订阅级**设置，会影响订阅内该类型的**所有**资源，包括 landing zone 之外的资源。
-      2. 这是**计费**项，不是免费功能。设为 [] 可全部关闭。
-    需要的资源提供程序：Microsoft.Security（providers.tf 里是
-    resource_provider_registrations = "none"，因此需先执行 az provider register -n Microsoft.Security）。
-  EOT
-  type        = set(string)
-  default     = ["StorageAccounts", "KeyVaults", "Arm"]
-
-  validation {
-    condition = alltrue([
-      for t in var.defender_resource_types : contains([
-        "AI", "Api", "AppServices", "CloudPosture", "ContainerRegistry", "Containers",
-        "CosmosDbs", "Dns", "KeyVaults", "KubernetesService", "OpenSourceRelationalDatabases",
-        "SqlServers", "SqlServerVirtualMachines", "StorageAccounts", "VirtualMachines", "Arm",
-      ], t)
-    ])
-    error_message = "defender_resource_types 含未知取值，合法值见 azurerm_security_center_subscription_pricing 文档。"
-  }
-}
-
 variable "key_vault_name" {
   description = "Key Vault 名称（全局唯一，3-24 位字母数字连字符）；留空则自动生成"
   type        = string
