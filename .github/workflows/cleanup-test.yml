@@ -52,7 +52,7 @@ jobs:
             recover=$(gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/actions/runs/$SOURCE_RUN_ID/jobs" | jq '[.[].jobs[] | select(.name == "deploy-test" and (.conclusion == "success" or .conclusion == "failure" or .conclusion == "cancelled"))] | length > 0')
           fi
           echo "needed=$recover" >> "$GITHUB_OUTPUT"
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         if: steps.recover.outputs.needed == 'true'
         with:
           ref: main
