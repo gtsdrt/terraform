@@ -84,7 +84,7 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
       - name: Encrypt and bind the destroy plan to its scope
         run: python3 .github/scripts/plan_artifact.py seal --input "$DESTROY_ENV/destroy.tfplan" --certificate ".github/plan-keys/$DESTROY_ENV.pem" --output "$DESTROY_ENV/destroy.cms" --environment "$DESTROY_ENV" --purpose destroy --scope "$DESTROY_SCOPE" >> "$GITHUB_STEP_SUMMARY"
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: encrypted-destroy-plan
           path: ${{ inputs.env }}/destroy.cms
