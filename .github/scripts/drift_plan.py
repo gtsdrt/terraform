@@ -8,6 +8,7 @@ import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import plan_summary
+import tf_run
 
 
 def classify(exit_code):
@@ -16,6 +17,16 @@ def classify(exit_code):
     if exit_code == 2:
         return "drift"
     return "error"
+
+
+def plan_command(directory, var_file, plan):
+    # Terraform's global option is -chdir=DIR; a space-separated -chdir DIR is invalid.
+    return ["terraform", f"-chdir={directory}", "plan", "-lock=false", "-input=false",
+            "-no-color", "-detailed-exitcode", f"-var-file={var_file}", f"-out={plan}"]
+
+
+def show_command(directory, plan):
+    return ["terraform", f"-chdir={directory}", "show", "-json", str(plan)]
 
 
 def write_summary(path, text):
@@ -33,23 +44,20 @@ def run(args):
     descriptor = os.open(log, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
     try:
         with os.fdopen(descriptor, "wb") as destination:
-            result = subprocess.run(
-                ["terraform", "-chdir", args.directory, "plan", "-lock=false",
-                 "-input=false", "-no-color", "-detailed-exitcode",
-                 f"-var-file={args.var_file}", f"-out={plan}"],
-                stdout=destination, stderr=subprocess.STDOUT)
+            result = subprocess.run(plan_command(args.directory, args.var_file, plan),
+                                    stdout=destination, stderr=subprocess.STDOUT)
         state = classify(result.returncode)
         if state == "clean":
             print("No drift detected.")
             return 0
         if state == "drift":
-            shown = subprocess.run(
-                ["terraform", "-chdir", args.directory, "show", "-json", str(plan)],
-                check=True, stdout=subprocess.PIPE)
+            shown = subprocess.run(show_command(args.directory, plan),
+                                   check=True, stdout=subprocess.PIPE)
             write_summary(args.summary, plan_summary.summary(json.loads(shown.stdout)))
             print("::warning::Drift detected. Review the sanitized resource actions above; raw output was withheld.")
             return 1
-        print("::error::Drift plan failed. Raw output was withheld; reproduce with the read-only identity.")
+        labels = ", ".join(tf_run.categories(log.read_text(errors="replace")))
+        print(f"::error::Drift plan failed ({labels}). Raw output was withheld; reproduce with the read-only identity.")
         return 1
     finally:
         plan.unlink(missing_ok=True)

@@ -18,13 +18,19 @@ variable "location" {
 module "network" {
   source = "../modules/network"
 
-  vnet_count          = var.vnet_count
-  resource_group_name = var.resource_group_name
-  location            = var.location
+  vnet_count                  = var.vnet_count
+  resource_group_name         = var.resource_group_name
+  location                    = var.location
+  enable_flow_logs            = true
+  flow_log_storage_account_id = module.azlandingzone.storage_account_id
 }
 
 output "deployed_vnets" {
   value = module.network.deployed_vnets
+}
+
+output "flow_logs" {
+  value = module.network.flow_log_ids
 }
 
 output "resource_group" {

@@ -22,11 +22,11 @@ Azure 网络与 Landing Zone 的 v2 从零重建配置。资源组和限定授�
 
 现有 state 账户 `gtsdrtterraform2`、backend 资源组 `Terraform` 和三个 OIDC 身份保留。旧 state 文件原样保留；新初始化脚本只创建缺失的 v2 文件，禁止覆盖。业务名称使用包含订阅与重建代号的稳定后缀，避开旧 v1 名称。生产开启当前配置名称的 Key Vault 软删除恢复，以支持销毁后的同名部署；恢复保留 Vault 内容并经过 production 审批，purge 仍关闭。
 
-foundation 由具备资源组创建及 RBAC 管理权限的 Azure 管理员执行，创建 3 个组、3 个自定义角色和 8 个角色分配，以及平台审计工作区、订阅活动日志和 Defender 计划。资源组设有 `prevent_destroy`；日常 GitHub 工作流只操作 prod/test state，不删除 foundation 的资源组或授权。
+foundation 由具备资源组创建及 RBAC 管理权限的 Azure 管理员执行，创建 3 个组、5 个自定义角色和 10 个角色分配，以及平台审计工作区、订阅活动日志和 Defender 计划。资源组设有 `prevent_destroy`；日常 GitHub 工作流只操作 prod/test state，不删除 foundation 的资源组或授权。
 
-prod 管理约 53 个资源，test 管理 14 个 network 资源。test 不覆盖 Landing Zone 的实际 apply。hub 子网已按 CIDR 做入站分段并默认拒绝出站 Internet；`modules/network` 的演示网络仍只有 VNet 内 HTTPS 入站，其他内部端口未做业务级最小权限。NSG/VNet Flow Log、Private Endpoint、Azure Firewall 仍未配置。
+prod 管理约 56 个资源，test 管理 14 个 network 资源。test 不覆盖 Landing Zone 的实际 apply。hub 子网已按 CIDR 做入站分段并默认拒绝出站 Internet；`modules/network` 的演示网络仍只有 VNet 内 HTTPS 入站，其他内部端口未做业务级最小权限。VNet Flow Log 已启用（hub + 2 个 prod VNet，version 2、90 天保留、写入审计 Storage）；Private Endpoint、Azure Firewall + UDR 仍未配置。
 
-检测基线与删除锁改由 foundation 承担：平台 Log Analytics 工作区、订阅活动日志（Administrative/Alert/Policy/Security）、Defender Standard 三计划，以及只含 `Microsoft.Authorization/locks/*` 的 `Lock Manager` 自定义角色。当前已全部启用：foundation 已 apply，3 把 `CanNotDelete` 锁已在 `tf` 中生效；审计 Storage 的日志诊断使用 blob service 级 `StorageRead/Write/Delete`。Defender 是订阅级计费项；活动日志要求订阅上尚无其他诊断设置。详见[安全架构](docs/ARCHITECTURE.md#写入串行与资源生命周期)。
+检测基线与删除锁改由 foundation 承担：平台 Log Analytics 工作区、订阅活动日志（Administrative/Alert/Policy/Security）、Defender Standard 三计划，以及只含 `Microsoft.Authorization/locks/*` 的 `Lock Manager` 自定义角色。VNet Flow Log 的读写由 foundation 的 `Flow Log Reader`/`Flow Log Manager`（仅 network watcher/flow log）提供。当前已全部启用：foundation 已 apply，3 把 `CanNotDelete` 锁与 3 条 flow log 已在 `tf` 中生效；审计 Storage 的日志诊断使用 blob service 级 `StorageRead/Write/Delete`。Defender 是订阅级计费项；活动日志要求订阅上尚无其他诊断设置。详见[安全架构](docs/ARCHITECTURE.md#写入串行与资源生命周期)。
 
 ## 从零初始化
 

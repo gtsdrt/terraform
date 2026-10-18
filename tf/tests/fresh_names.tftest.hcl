@@ -54,4 +54,12 @@ run "hardened_network_and_storage_baseline" {
     condition     = output.azlandingzone.security_baseline.management_lock_levels.key_vault == "CanNotDelete" && output.azlandingzone.security_baseline.management_lock_levels.storage == "CanNotDelete" && output.azlandingzone.security_baseline.management_lock_levels.log_analytics == "CanNotDelete"
     error_message = "Key Vault, audit storage and Log Analytics must all carry a CanNotDelete lock."
   }
+  assert {
+    condition     = output.azlandingzone.security_baseline.flow_log_enabled == true && output.azlandingzone.security_baseline.flow_log_retention_days == 90
+    error_message = "The hub VNet must keep a 90-day flow log."
+  }
+  assert {
+    condition     = length(output.flow_logs) == 2
+    error_message = "Each prod VNet must have a flow log when the audit storage account is passed."
+  }
 }

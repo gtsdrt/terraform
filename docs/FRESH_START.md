@@ -101,7 +101,7 @@ terraform -chdir=tf-foundation output resource_groups
 terraform -chdir=tf-foundation output platform_log_analytics_workspace_id
 ```
 
-全部对象不存在时，foundation 计划创建 19 个 managed resources：3 个资源组、3 个自定义角色、8 个角色分配、1 个平台审计 Log Analytics 工作区、1 个订阅活动日志诊断和 3 个 Defender Standard 计划。其中 Defender 是订阅级**计费**项（可用 `defender_resource_types = []` 关闭）；订阅活动日志要求该订阅上尚无其它诊断设置。如果已经手动创建三个组及三个 Contributor 授权，预计导入这 6 个对象，其余按创建处理，并可能更新资源组标签。核对计划中只包含这些对象的创建、导入或标签更新，尤其检查角色分配范围及 principal IDs；资源组应无删除或替换，然后再执行 apply。import 块随该保存计划一起执行。[Terraform import 的工作方式](https://developer.hashicorp.com/terraform/language/import)
+全部对象不存在时，foundation 计划创建 23 个 managed resources：3 个资源组、5 个自定义角色、10 个角色分配、1 个平台审计 Log Analytics 工作区、1 个订阅活动日志诊断和 3 个 Defender Standard 计划。其中 Defender 是订阅级**计费**项（可用 `defender_resource_types = []` 关闭）；订阅活动日志要求该订阅上尚无其它诊断设置。如果已经手动创建三个组及三个 Contributor 授权，预计导入这 6 个对象，其余按创建处理，并可能更新资源组标签。核对计划中只包含这些对象的创建、导入或标签更新，尤其检查角色分配范围及 principal IDs；资源组应无删除或替换，然后再执行 apply。import 块随该保存计划一起执行。[Terraform import 的工作方式](https://developer.hashicorp.com/terraform/language/import)
 
 全新组的位置默认是 `norwayeast`；已有组保留脚本检测到的位置，network 和 Landing Zone 业务资源也使用各自组的位置。初始化成功后等待 RBAC 传播，再运行业务 plan。反复 apply foundation 会对照其 state 更新缺失或漂移的基础资源。
 

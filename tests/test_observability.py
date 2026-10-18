@@ -28,6 +28,17 @@ class DriftPlanTests(unittest.TestCase):
         for code in (1, 3, 127):
             self.assertEqual(drift.classify(code), "error")
 
+    def test_chdir_uses_the_equals_form(self):
+        # Terraform rejects "-chdir DIR"; the option must be a single "-chdir=DIR".
+        command = drift.plan_command("tf", "terraform.tfvars", "/tmp/drift.tfplan")
+        self.assertIn("-chdir=tf", command)
+        self.assertNotIn("-chdir", command)
+        self.assertIn("-detailed-exitcode", command)
+        self.assertEqual(command[0], "terraform")
+        shown = drift.show_command("tf", "/tmp/drift.tfplan")
+        self.assertIn("-chdir=tf", shown)
+        self.assertNotIn("-chdir", shown)
+
 
 class PreflightTests(unittest.TestCase):
     def test_normal_resource_passes(self):

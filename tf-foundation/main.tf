@@ -120,3 +120,51 @@ resource "azurerm_role_assignment" "lock_manager" {
   principal_id       = var.principal_ids.prod
   principal_type     = "ServicePrincipal"
 }
+
+# ── VNet Flow Log：资源在 NetworkWatcherRG 的 network watcher 下，不在业务组内 ──
+# plan 需要读取 flow log 状态，prod 需要创建/删除；两个角色都只给 network watcher
+# 与 flow log 的权限，不授予网络写权限。NetworkWatcherRG 由 Azure 自动创建，
+# 因此 role assignment 放在订阅 scope，避免依赖该 RG 的创建顺序。
+resource "azurerm_role_definition" "flow_log_reader" {
+  name               = "gtsdrt Terraform v2 Flow Log Reader ${var.subscription_id}"
+  role_definition_id = uuidv5("url", "${local.subscription_scope}/terraform-v2/flow-log-reader")
+  scope              = local.subscription_scope
+  assignable_scopes  = [local.subscription_scope]
+  description        = "Read the regional network watcher and its flow logs only"
+  permissions {
+    actions = [
+      "Microsoft.Network/networkWatchers/read",
+      "Microsoft.Network/networkWatchers/flowLogs/read",
+    ]
+  }
+}
+
+resource "azurerm_role_assignment" "flow_log_reader" {
+  scope              = local.subscription_scope
+  role_definition_id = azurerm_role_definition.flow_log_reader.role_definition_resource_id
+  principal_id       = var.principal_ids.plan
+  principal_type     = "ServicePrincipal"
+}
+
+resource "azurerm_role_definition" "flow_log_manager" {
+  name               = "gtsdrt Terraform v2 Flow Log Manager ${var.subscription_id}"
+  role_definition_id = uuidv5("url", "${local.subscription_scope}/terraform-v2/flow-log-manager")
+  scope              = local.subscription_scope
+  assignable_scopes  = [local.subscription_scope]
+  description        = "Create, update and delete network watcher flow logs only"
+  permissions {
+    actions = [
+      "Microsoft.Network/networkWatchers/read",
+      "Microsoft.Network/networkWatchers/flowLogs/read",
+      "Microsoft.Network/networkWatchers/flowLogs/write",
+      "Microsoft.Network/networkWatchers/flowLogs/delete",
+    ]
+  }
+}
+
+resource "azurerm_role_assignment" "flow_log_manager" {
+  scope              = local.subscription_scope
+  role_definition_id = azurerm_role_definition.flow_log_manager.role_definition_resource_id
+  principal_id       = var.principal_ids.prod
+  principal_type     = "ServicePrincipal"
+}
