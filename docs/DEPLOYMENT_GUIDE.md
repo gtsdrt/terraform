@@ -2,7 +2,7 @@
 
 本文说明 `gtsdrt/terraform` 从代码提交、PR 审查到 Azure 部署、销毁及测试恢复的完整流程，供提交者、审查者和部署审批人使用。
 
-配置核对日期：2026-10-06；v2 初始化及首次 full 部署已经完成，运行与资源验收见[部署记录](DEPLOYMENT_RECORD_2026-10-06.md)。日常操作按本指南运行 main 的 `plan-only → full`。首次建立环境时先完成 [Terraform foundation 初始化](FRESH_START.md)，创建或接管资源组和授权。工作流和仓库设置后续可能调整，操作前以当前运行及环境设置为准。权限设计另见[安全架构](ARCHITECTURE.md)及[README](../README.md#从零初始化)。
+配置核对日期：2026-10-18；v2 初始化、完整部署、销毁及漂移检测均已验证，端到端流程、整改记录与控制矩阵见[安全基线与流程总结](SECURITY_BASELINE_2026-10-18.md)。日常操作按本指南运行 main 的 `plan-only → full`。首次建立环境时先完成 [Terraform foundation 初始化](FRESH_START.md)，创建或接管资源组和授权。工作流和仓库设置后续可能调整，操作前以当前运行及环境设置为准。权限设计另见[安全架构](ARCHITECTURE.md)及[README](../README.md#从零初始化)；新增资源见[添加资源指南](ADDING_RESOURCES.md)。
 
 ## 日常部署操作
 
@@ -136,6 +136,8 @@ gh workflow run deploy.yml --repo gtsdrt/terraform --ref main -f mode=plan-only
 `Terraform Drift Detection` 每天 03:23 UTC（以及手动触发）用 plan 只读身份对 `tf-test`、`tf` 运行 `terraform plan -detailed-exitcode`。它不写 state、不 apply，只在运行 Summary 发布与部署相同的脱敏资源动作；发现差异时该运行变为 failure。
 
 处理方式：先看 Summary 中的资源动作，再判断是代码漂移（重新部署）还是手工变更（回滚或纳入代码）。原始 plan 和 state 不进入公开日志；需要细节时由授权身份在受限位置复现。
+
+**环境完全销毁后**，配置仍定义资源，plan 会显示 create（exit 2），因此本 workflow 会报 `Drift detected`。这是“未部署”，不是配置漂移；重新部署后应恢复 no drift。
 
 部署的 plan job 还会运行**跨层权限预检**：订阅级资源、无 Lock Manager 授权的 module 中的锁、或 plan/apply 身份相同都会在审批前失败。出现此类错误时，把对应资源移到 foundation 或调整授权 scope，不要绕过预检。
 
@@ -291,6 +293,11 @@ Key Vault 销毁后名称在软删除保留期内仍被占用。当前生产配�
 | `--slurp` 不能与 `--jq` 同用 | 确认已使用包含分页修复的 v2 配置及新运行；分页输出由外部 jq 处理 |
 | 恢复任务只有 cleanup job | 这是正常的恢复工作流结构，不是 production 审批入口 |
 | `state-lock` | 查找仍在运行的写入执行者或人工操作；不要强制解锁活跃 lease |
+| `stale-plan` | state serial 已变（部分 apply/并发操作）；新建 full/destroy 运行生成新计划，重跑旧 apply 无效 |
+| `api-conflict` / `AnotherOperationInProgress` | Azure 对同一 VNet 等资源的并发写冲突；等待后新建 full 运行，不重跑 stale 计划；持续出现可降低 apply 并行度或串行化同 VNet 子网 |
+| `scope-locked` | 父资源 `CanNotDelete` 锁未先删除；当前模块用 `depends_on` 保证锁先于诊断。确认锁已删后新建 destroy plan，不要手动绕过 |
+| 销毁后 drift 变红 | 配置仍定义资源但 state 为空，plan 显示 create（exit 2）属于“未部署”；重新部署后复查 |
+| 新增资源 | 按[添加资源指南](ADDING_RESOURCES.md)判断层级、补权限/测试/销毁顺序 |
 | `stale-plan` | state 已变化或计划与 state 不匹配；创建新运行，重新审查 |
 | `authorization` | 核对 OIDC subject、Client ID、环境分支限制、资源组和容器 RBAC；注意权限传播时间 |
 | `key-vault-soft-delete` | 生产销毁后的同名 Vault 仍在软删除期，且运行配置关闭恢复。使用包含本次恢复修复的新 main 创建新计划；恢复保留内容且经过 production 审批 |

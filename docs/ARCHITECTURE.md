@@ -105,6 +105,8 @@ Key Vault 保持 RBAC、默认拒绝网络及 purge protection；诊断 Storage 
 
 当前已全部启用：foundation 已 apply，3 把锁已在 `tf` 生效；审计 Storage 的日志诊断使用 blob service 级 `StorageRead/Write/Delete`（账户级只有 Capacity/Transaction 指标）。检测资源不随 Landing Zone 销毁而中断；平台工作区与活动日志独立于 `tf` state。Defender 计费且要求已注册 `Microsoft.Security`。
 
+新增资源的落位、最小权限和测试步骤见[添加资源指南](ADDING_RESOURCES.md)；2026-10-18 的完整整改、控制矩阵和端到端流程见[安全基线与流程总结](SECURITY_BASELINE_2026-10-18.md)。
+
 销毁保留 foundation 的组与授权；Key Vault/Log Analytics 不永久 purge。诊断 Storage 属于业务销毁范围，其归档日志不会因上述软删除策略得到保护。未来生产审计需要独立的长期存储生命周期。
 
 ## 历史配置

@@ -2,7 +2,7 @@
 
 本方案用于原业务资源已经丢失、选择全新重建的场景。v2 使用新资源组、新业务资源名称和新 state key，不覆盖旧 state，不使用旧 v1 Key Vault 的名称。初次建立新 namespace 与随后销毁当前 namespace 后的同名部署不同：后者允许在生产审批后恢复当前名称的软删除 Vault，见[2026-10-08 处理说明](DEPLOYMENT_INCIDENT_2026-10-08.md)。
 
-2026-10-06 已完成此次 v2 初始化及完整部署，代码通过 [PR #16](https://github.com/gtsdrt/terraform/pull/16) 合入 main。结果见[部署记录](DEPLOYMENT_RECORD_2026-10-06.md)。日常更新按[部署指南](DEPLOYMENT_GUIDE.md)运行 main 的 `plan-only → full`；本文保留管理员初始化和接管已有基础资源的步骤。再次建立全新一代环境时，先协调新的 namespace 和 state key，见第 6 节。
+2026-10-06 已完成此次 v2 初始化及完整部署，代码通过 [PR #16](https://github.com/gtsdrt/terraform/pull/16) 合入 main。结果见[部署记录](DEPLOYMENT_RECORD_2026-10-06.md)。日常更新按[部署指南](DEPLOYMENT_GUIDE.md)运行 main 的 `plan-only → full`；本文保留管理员初始化和接管已有基础资源的步骤。再次建立全新一代环境时，先协调新的 namespace 和 state key，见第 6 节。新增资源见[添加资源指南](ADDING_RESOURCES.md)，当前安全基线与完整流程见[总结](SECURITY_BASELINE_2026-10-18.md)。
 
 当前仍存在的 backend 资源组 `Terraform`、存储账户 `gtsdrtterraform2` 和 GitHub 的三个 OIDC 身份继续使用。backend 属于独立的管理基础设施，不能在其承载的业务 state 中自我创建或删除。如果该账户也不存在，必须先另行建立 backend；本初始化脚本会停止，不会自动覆盖或替换它。
 

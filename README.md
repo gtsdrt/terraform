@@ -6,9 +6,13 @@ Azure 网络与 Landing Zone 的 v2 从零重建配置。资源组和限定授�
 
 2026-10-08 又验证了同名 Key Vault 恢复、完整部署及后续生产全量销毁均成功，见[恢复与销毁验证](docs/DEPLOYMENT_INCIDENT_2026-10-08.md#修复后的验证结果)。下次部署会根据 Vault 当前状态选择使用、恢复或新建；保留期结束并完成清除后，原有 secrets/keys 无法恢复，详见[生命周期说明](docs/DEPLOYMENT_GUIDE.md#销毁后下次部署会怎样)。
 
+2026-10-18 完成安全基线整改（检测基线、删除锁、VNet Flow Log、漂移检测、跨层权限预检、Terraform 1.16.6、公开 ID 打码），并修复销毁时的锁/诊断顺序问题；部署与销毁均已再次验证。完整过程见[安全基线与流程总结](docs/SECURITY_BASELINE_2026-10-18.md)。
+
 - 首次初始化：[从零重建说明](docs/FRESH_START.md)
 - 日常操作：[部署、审批、销毁与恢复](docs/DEPLOYMENT_GUIDE.md)
 - 权限边界：[安全架构](docs/ARCHITECTURE.md)
+- **新增资源**：[分层、权限、测试与部署步骤](docs/ADDING_RESOURCES.md)
+- **安全基线与流程总结**：[2026-10-18 整改与端到端流程](docs/SECURITY_BASELINE_2026-10-18.md)
 - 本次部署：[v2 验证记录](docs/DEPLOYMENT_RECORD_2026-10-06.md)
 - 销毁后重建：[2026-10-08 Key Vault 软删除问题与处理](docs/DEPLOYMENT_INCIDENT_2026-10-08.md)
 
@@ -27,6 +31,20 @@ foundation 由具备资源组创建及 RBAC 管理权限的 Azure 管理员执�
 prod 管理约 56 个资源，test 管理 14 个 network 资源。test 不覆盖 Landing Zone 的实际 apply。hub 子网已按 CIDR 做入站分段并默认拒绝出站 Internet；`modules/network` 的演示网络仍只有 VNet 内 HTTPS 入站，其他内部端口未做业务级最小权限。VNet Flow Log 已启用（hub + 2 个 prod VNet，version 2、90 天保留、写入审计 Storage）；Private Endpoint、Azure Firewall + UDR 仍未配置。
 
 检测基线与删除锁改由 foundation 承担：平台 Log Analytics 工作区、订阅活动日志（Administrative/Alert/Policy/Security）、Defender Standard 三计划，以及只含 `Microsoft.Authorization/locks/*` 的 `Lock Manager` 自定义角色。VNet Flow Log 的读写由 foundation 的 `Flow Log Reader`/`Flow Log Manager`（仅 network watcher/flow log）提供。当前已全部启用：foundation 已 apply，3 把 `CanNotDelete` 锁与 3 条 flow log 已在 `tf` 中生效；审计 Storage 的日志诊断使用 blob service 级 `StorageRead/Write/Delete`。Defender 是订阅级计费项；活动日志要求订阅上尚无其他诊断设置。详见[安全架构](docs/ARCHITECTURE.md#写入串行与资源生命周期)。
+
+## 全流程速览
+
+```text
+管理员 foundation（一次性/变更）→ PR + 必需检查 → 合入 main
+  → plan（只读身份 + 脱敏摘要 + 加密）→ deploy-test → cleanup-test
+  → production 双人审批 → deploy-prod（apply 同一份计划）
+  → 验证；每日 Drift Detection；手动 Destroy（plan → 审批 → apply）
+```
+
+- **新增资源**：先按[分层规则](docs/ADDING_RESOURCES.md#1-先决定放哪一层)判断放在 `tf-foundation` 还是 `tf`/`modules`，再按指南补权限、测试和销毁顺序。
+- **部署**：`plan-only` 预览 → `full`；生产由非触发账号审批（`prevent_self_review`）。
+- **销毁**：`destroy.yml`，先删锁再删诊断和资源；详见[销毁流程](docs/DEPLOYMENT_GUIDE.md#10-销毁流程)。
+- **失败处理**：`stale-plan` 新建运行；`api-conflict` 等待后重试；`scope-locked` 检查锁顺序；完整矩阵见[安全基线与流程总结](docs/SECURITY_BASELINE_2026-10-18.md)。
 
 ## 从零初始化
 
