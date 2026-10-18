@@ -285,11 +285,16 @@ resource "azurerm_monitor_diagnostic_setting" "key_vault" {
 # 但仍不能写 RBAC 或其它 Authorization 资源。
 # 用 management lock 而不是 lifecycle.prevent_destroy：锁由 Terraform 管理，
 # destroy 时 Terraform 会先删除锁再删除资源（隐式依赖），所以销毁流程仍然可用。
+#
+# ⚠️ 锁与同级的诊断设置没有天然顺序：如果诊断先被删除，父资源上的 CanNotDelete
+# 锁会让 Azure 返回 ScopeLocked（409 Conflict）。因此让锁 depends_on 对应诊断，
+# 保证销毁顺序为「锁 → 诊断 → 资源」。2026-10-18 的 destroy 失败即由这个竞态导致。
 resource "azurerm_management_lock" "key_vault" {
   name       = "lock-do-not-delete"
   scope      = azurerm_key_vault.this.id
   lock_level = "CanNotDelete"
   notes      = "零信任基线：Key Vault 不可直接删除。terraform destroy 会先移除本锁。"
+  depends_on = [azurerm_monitor_diagnostic_setting.key_vault]
 }
 
 resource "azurerm_management_lock" "storage" {
@@ -297,6 +302,7 @@ resource "azurerm_management_lock" "storage" {
   scope      = azurerm_storage_account.diagnostics.id
   lock_level = "CanNotDelete"
   notes      = "零信任基线：审计日志落地点不可直接删除。terraform destroy 会先移除本锁。"
+  depends_on = [azurerm_monitor_diagnostic_setting.storage]
 }
 
 resource "azurerm_management_lock" "log_analytics" {

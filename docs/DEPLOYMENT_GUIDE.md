@@ -250,6 +250,12 @@ gh workflow run destroy.yml --repo gtsdrt/terraform --ref main -f env=tf-test -f
 
 资源组保留；Key Vault 有防清除保护，Log Analytics 不永久 purge。**销毁 Landing Zone 仍会删除诊断存储账户及其归档日志**，这些日志不受上述 Key Vault/Log Analytics 软删除设置保护。重要审计日志应独立保留后再审批销毁。
 
+### 销毁顺序与父资源锁
+
+父资源上的 `CanNotDelete` 锁会阻止删除它的子资源（例如存储账户的 blob service 诊断设置）。`modules/azlandingzone` 让 KV/Storage 的管理锁 `depends_on` 对应诊断设置，因此 Terraform 的销毁顺序是「锁 → 诊断 → 资源」。
+
+如果 apply 报 `ScopeLocked` / `409 Conflict`，说明父资源锁仍在。不要手动绕过或直接删锁后继续旧计划；确认锁已按依赖删除后，重新生成 destroy plan 再执行。`tf_run.py` 会把这类错误归到 `scope-locked` 类别。
+
 Key Vault 销毁后名称在软删除保留期内仍被占用。当前生产配置允许审批后的 apply 恢复该组中配置的同名 Vault，并保留原有内容；诊断配置由 Terraform 重建。它使用组范围 Contributor 的 vaults/write 及订阅范围 deleted-vault 元数据读取，不扩大到订阅写入或 purge。计划中的 Key Vault create 会注明这种恢复可能性。[2026-10-08 的实际问题与处理](DEPLOYMENT_INCIDENT_2026-10-08.md)
 
 若需要完全全新的 Vault 内容，应选择新的名称并审查新的计划。若管理员已经在 Portal/CLI 恢复了 Vault，而当前 state 没有该对象，需先 import 再部署，避免同名活跃资源冲突。不要把 purge 当成日常回滚。
