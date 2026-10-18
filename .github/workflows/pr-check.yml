@@ -33,7 +33,7 @@ jobs:
           persist-credentials: false
       - uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd # v3
         with:
-          terraform_version: "1.9.8"
+          terraform_version: "1.16.6"
           terraform_wrapper: false
       - name: Format all modules
         run: terraform fmt -check -recursive
@@ -57,7 +57,7 @@ jobs:
         run: python3 -m unittest discover -s tests -v
       - uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd # v3
         with:
-          terraform_version: "1.9.8"
+          terraform_version: "1.16.6"
           terraform_wrapper: false
       - name: Test foundation RBAC and fresh resource names without Azure access
         run: |

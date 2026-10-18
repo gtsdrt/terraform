@@ -95,3 +95,29 @@ run "platform_detection_and_lock_role" {
     error_message = "Sub-plans must be explicit; otherwise every plan replaces the pricing resource."
   }
 }
+
+run "flow_log_roles" {
+  command = plan
+
+  override_resource {
+    target = azurerm_role_definition.flow_log_reader
+    values = { role_definition_resource_id = "/subscriptions/11111111-1111-1111-1111-111111111111/providers/Microsoft.Authorization/roleDefinitions/99999999-9999-9999-9999-999999999999" }
+  }
+  override_resource {
+    target = azurerm_role_definition.flow_log_manager
+    values = { role_definition_resource_id = "/subscriptions/11111111-1111-1111-1111-111111111111/providers/Microsoft.Authorization/roleDefinitions/aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa" }
+  }
+
+  assert {
+    condition     = toset(azurerm_role_definition.flow_log_reader.permissions[0].actions) == toset(["Microsoft.Network/networkWatchers/read", "Microsoft.Network/networkWatchers/flowLogs/read"]) && length(coalesce(azurerm_role_definition.flow_log_reader.permissions[0].data_actions, [])) == 0
+    error_message = "Flow log reader must only read the network watcher and flow logs."
+  }
+  assert {
+    condition     = toset(azurerm_role_definition.flow_log_manager.permissions[0].actions) == toset(["Microsoft.Network/networkWatchers/read", "Microsoft.Network/networkWatchers/flowLogs/read", "Microsoft.Network/networkWatchers/flowLogs/write", "Microsoft.Network/networkWatchers/flowLogs/delete"]) && length(coalesce(azurerm_role_definition.flow_log_manager.permissions[0].data_actions, [])) == 0
+    error_message = "Flow log manager must only manage flow logs, never other network resources."
+  }
+  assert {
+    condition     = azurerm_role_assignment.flow_log_reader.principal_id == var.principal_ids.plan && azurerm_role_assignment.flow_log_manager.principal_id == var.principal_ids.prod && azurerm_role_assignment.flow_log_reader.scope == "/subscriptions/${var.subscription_id}" && azurerm_role_assignment.flow_log_manager.scope == "/subscriptions/${var.subscription_id}"
+    error_message = "Flow log roles must be subscription-scoped to plan and prod respectively."
+  }
+}

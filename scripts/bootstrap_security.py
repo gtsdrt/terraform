@@ -105,7 +105,7 @@ def prepare():
     repository = gh_json(f"repos/{REPO}")
     prefix = f"repo:{repository['owner']['login']}@{repository['owner']['id']}/{repository['name']}@{repository['id']}"
     principals = {}
-    for kind, subject in (("plan", f"{prefix}:ref:refs/heads/main"),
+    for kind, subject in (("plan", f"{prefix}:environment:plan-readonly"),
                           ("test", f"{prefix}:environment:test"),
                           ("prod", f"{prefix}:environment:production")):
         _, sp = identity(kind, subject)

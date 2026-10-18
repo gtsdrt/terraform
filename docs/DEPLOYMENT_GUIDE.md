@@ -56,6 +56,8 @@ state 保存在存储账户 `gtsdrtterraform2`。三个 v2 资源组由管理员
 
 GitHub 通过 OIDC 换取 Azure 短期身份，不在工作流中使用长期 Azure Client Secret。plan/test/prod 的 Client ID 必须互不相同。代码中的权限模型是资源组范围的管理权限及容器范围的数据权限，详情见[安全架构](ARCHITECTURE.md#认证和授权)。
 
+plan job（部署、销毁、漂移检测）绑定 `plan-readonly` 环境（仅 main、无人工审批），plan 身份的 OIDC subject 为 `environment:plan-readonly`。旧的 `ref:refs/heads/main` 联邦凭据在至少一次 plan 成功后移除，完成身份收窄。
+
 plan 身份包含刷新 Storage 和 Log Analytics 所需的密钥读取操作，所以“只读”仍可能读取敏感信息。完整计划和原始 Terraform 输出不能公开发布。
 
 ### 工作流 Disabled 时如何启用
@@ -128,6 +130,14 @@ gh workflow run deploy.yml --repo gtsdrt/terraform --ref main -f mode=plan-only
 此模式仅执行两个 plan job，发布资源动作和允许列表中的安全字段，不上传加密计划，不部署，不运行测试清理。它使用独立的 `terraform-preview` 队列，因此生产等待审批时仍可预览。
 
 预览不持有写入锁，可能与正在执行的部署并发，结果仅供参考。生产审批应检查准备执行的那条 full 运行中的摘要。
+
+### 5.1 漂移检测
+
+`Terraform Drift Detection` 每天 03:23 UTC（以及手动触发）用 plan 只读身份对 `tf-test`、`tf` 运行 `terraform plan -detailed-exitcode`。它不写 state、不 apply，只在运行 Summary 发布与部署相同的脱敏资源动作；发现差异时该运行变为 failure。
+
+处理方式：先看 Summary 中的资源动作，再判断是代码漂移（重新部署）还是手工变更（回滚或纳入代码）。原始 plan 和 state 不进入公开日志；需要细节时由授权身份在受限位置复现。
+
+部署的 plan job 还会运行**跨层权限预检**：订阅级资源、无 Lock Manager 授权的 module 中的锁、或 plan/apply 身份相同都会在审批前失败。出现此类错误时，把对应资源移到 foundation 或调整授权 scope，不要绕过预检。
 
 ## 6. 完整部署：full
 
@@ -268,6 +278,8 @@ Key Vault 销毁后名称在软删除保留期内仍被占用。当前生产配�
 | 只有 Merge pull request，没有 deploy 按钮 | 当前在 PR 页面；进入 Actions 的具体运行 Summary |
 | reviewer 无法批准 production | 进入具体运行的 Summary，用 `gh run view <id> --json triggering_actor` 确认发起账号；`prevent_self_review` 下用另一个审批账号批准。禁止自行审批，不使用管理员绕过 |
 | 计划过期 / artifact 不存在 | 新建 full/destroy 运行并审查新计划；不复用或手动替换旧 artifact |
+| 跨层权限预检失败 | 计划含订阅级资源、无 Lock Manager 授权的 module 中的锁，或 plan/apply 身份相同；把这些变更移到 foundation 或调整授权 scope，不要绕过预检 |
+| 漂移检测运行变红 | 查看该运行 Summary 的脱敏资源动作；确认是代码漂移还是手工变更，再重新部署或回滚 |
 | 测试失败或清理失败 | 生产会停止；先诊断错误，再检查恢复任务，修复后创建新运行 |
 | 整条运行取消后测试资源仍存在 | 正常取消可能中断清理；等待独立恢复，或确认写入队列释放后手动运行 Test Recovery |
 | `--slurp` 不能与 `--jq` 同用 | 确认已使用包含分页修复的 v2 配置及新运行；分页输出由外部 jq 处理 |
