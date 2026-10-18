@@ -13,6 +13,7 @@ ERRORS = {
     "state-lock": ("error acquiring the state lock", "leasealreadypresent", "leaseidmissing"),
     "stale-plan": ("saved plan is stale", "saved plan does not match"),
     "quota": ("quotaexceeded", "operationnotallowed", "subscriptionisoverquotaforsku"),
+    "scope-locked": ("scopelocked", "cannot perform delete operation because following scope(s) are locked"),
     "name-conflict": ("alreadyexists", "already exists", "already in use", "conflict"),
     "network": ("context deadline exceeded", "no such host", "connection refused", "i/o timeout"),
     "registration": ("missingsubscriptionregistration", "noregisteredproviderfound"),
@@ -22,6 +23,7 @@ HINTS = {
     "key-vault-soft-delete": "A configured Key Vault name is retained by soft delete. Review recovery settings and create a new deployment plan.",
     "api-conflict": "Azure reports concurrent operations or throttling. Wait for active operations to finish before creating a new plan.",
     "provider-error": "The provider reported an unsupported operation or inconsistent result. Reproduce with an authorized identity before retrying.",
+    "scope-locked": "A CanNotDelete lock on the parent resource blocked a child delete. Delete the lock first (module ordering) and retry.",
 }
 
 

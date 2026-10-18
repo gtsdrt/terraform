@@ -300,5 +300,18 @@ class ScopeSeparationTests(unittest.TestCase):
             self.assertNotRegex(text, r'target_resource_id\s*=\s*"/subscriptions/', path)
 
 
+class LockOrderingTests(unittest.TestCase):
+    """CanNotDelete locks must be destroyed before their child diagnostics."""
+
+    def test_scope_locked_is_classified(self):
+        text = "ScopeLocked: cannot perform delete operation because following scope(s) are locked"
+        self.assertIn("scope-locked", runner.categories(text))
+
+    def test_locks_depend_on_diagnostics(self):
+        text = (ROOT / "modules/azlandingzone/main.tf").read_text(encoding="utf-8")
+        self.assertIn("depends_on = [azurerm_monitor_diagnostic_setting.key_vault]", text)
+        self.assertIn("depends_on = [azurerm_monitor_diagnostic_setting.storage]", text)
+
+
 if __name__ == "__main__":
     unittest.main()
