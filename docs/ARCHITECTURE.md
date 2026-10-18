@@ -16,7 +16,7 @@
 
 | 身份 | OIDC subject 后缀 | 管理权限 | state 数据权限 |
 |---|---|---|---|
-| plan | `environment:plan-readonly` | 三个 v2 组的只读角色，包含刷新诊断资源所需的 Storage listKeys/Log Analytics sharedKeys | prod/test 容器 Blob Data Reader |
+| plan | `environment:plan-readonly` | 三个 v2 组的只读角色（含刷新诊断所需的 Storage listKeys / Log Analytics sharedKeys）；订阅级 Flow Log Reader（network watcher / flow log 只读） | prod/test 容器 Blob Data Reader |
 | test | `environment:test` | 仅 test-v2 组 Contributor | 仅 test 容器 Blob Data Contributor |
 | prod | `environment:production` | 仅两个生产 v2 组 Contributor；订阅范围附加 deleted-vault 元数据读取 | 仅 prod 容器 Blob Data Contributor |
 | 本地管理员 | Azure CLI 登录 | foundation 与初始化所需管理权限 | foundation 容器 Blob Data Contributor |
@@ -89,7 +89,7 @@ test apply 完成或失败后立即清理，测试与清理均成功才进入生
 
 Key Vault 保持 RBAC、默认拒绝网络及 purge protection；诊断 Storage 默认 Deny、仅放行 Azure 可信服务，并关闭共享密钥、启用自身诊断。Log Analytics 设每日摄入配额。普通业务身份的 secret 数据权限和私网访问需另行配置，test 仍只验证 network。
 
-网络侧：hub 的三个常规子网按 CIDR 做入站分段（不再用整体 `VirtualNetwork` 放行），并显式拒绝出站 Internet；`modules/network` 的演示网络只保留 VNet 内 HTTPS 入站。NSG/VNet Flow Log、Private Endpoint、Azure Firewall + UDR 仍未配置，属于后续待补项。
+网络侧：hub 的三个常规子网按 CIDR 做入站分段（不再用整体 `VirtualNetwork` 放行），并显式拒绝出站 Internet；`modules/network` 的演示网络只保留 VNet 内 HTTPS 入站。VNet Flow Log 已启用（hub + 2 个 prod VNet，version 2、90 天保留、写入审计 Storage，资源在 `NetworkWatcherRG` 下）；Private Endpoint、Azure Firewall + UDR 仍未配置，属于后续待补项。
 
 检测基线与删除锁由 **foundation** 承担，而不是工作负载 root。原因：prod SP 只有两个生产组的 Contributor，没有订阅级写权限；且 Contributor 的 notActions 含 `Microsoft.Authorization/*/Write`，不能管理锁。
 
@@ -99,7 +99,9 @@ Key Vault 保持 RBAC、默认拒绝网络及 purge protection；诊断 Storage 
 | 订阅活动日志诊断 | foundation | Administrative/Alert/Policy/Security → 平台工作区；一个订阅只允许一个 |
 | Defender Standard 三计划 | foundation | 订阅级计费项；`defender_resource_types = []` 可关闭 |
 | `Lock Manager` 自定义角色 | foundation | 仅 `Microsoft.Authorization/locks/read|write|delete`；分配给 prod SP，scope 为 `azlandingzone-v2` |
+| Flow Log Reader / Manager | foundation | 仅 `networkWatchers/read` 与 `flowLogs/read|write|delete`；订阅 scope，分别分配给 plan / prod |
 | KV / Storage / LA 的 `CanNotDelete` 锁 | `tf` | 已启用：foundation 授予 Lock Manager 角色，`tf` 管理三把锁；destroy 会先删锁 |
+| hub / prod VNet Flow Log | `tf` | 已启用：version 2、90 天、写入审计 Storage；在 `NetworkWatcherRG` 下创建 |
 
 当前已全部启用：foundation 已 apply，3 把锁已在 `tf` 生效；审计 Storage 的日志诊断使用 blob service 级 `StorageRead/Write/Delete`（账户级只有 Capacity/Transaction 指标）。检测资源不随 Landing Zone 销毁而中断；平台工作区与活动日志独立于 `tf` state。Defender 计费且要求已注册 `Microsoft.Security`。
 
