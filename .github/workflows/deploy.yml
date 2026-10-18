@@ -38,6 +38,7 @@ env:
 jobs:
   plan:
     if: github.ref == 'refs/heads/main'
+    environment: plan-readonly
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     permissions:
@@ -64,13 +65,16 @@ jobs:
         run: python3 .github/scripts/check_identities.py
       - uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd # v3
         with:
-          terraform_version: "1.9.8"
+          terraform_version: "1.16.6"
           terraform_wrapper: false
       - name: Terraform init
         run: python3 ../.github/scripts/tf_run.py --log "$RUNNER_TEMP/init.log" -- terraform init -input=false -lockfile=readonly
       - name: Terraform plan with a read-only state identity
         # Apply is serialized and rejects stale plans. Reader cannot acquire a lease.
         run: python3 ../.github/scripts/tf_run.py --log "$RUNNER_TEMP/plan.log" -- terraform plan -lock=false -no-color -input=false -var-file=terraform.tfvars -out=tfplan
+      - name: Cross-layer permission preflight
+        # Fail before approval if the plan contains resources the apply identity cannot write.
+        run: terraform show -json tfplan | python3 ../.github/scripts/preflight_permissions.py --environment ${{ matrix.dir }}
       - name: Publish actions and allowlisted security settings
         run: terraform show -json tfplan | python3 ../.github/scripts/plan_summary.py --key-vault-recovery "${{ matrix.dir == 'tf' && 'enabled' || 'disabled' }}" >> "$GITHUB_STEP_SUMMARY"
       - name: Encrypt the exact plan using the environment public certificate
@@ -108,7 +112,7 @@ jobs:
           persist-credentials: false
       - uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd # v3
         with:
-          terraform_version: "1.9.8"
+          terraform_version: "1.16.6"
           terraform_wrapper: false
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
@@ -146,7 +150,7 @@ jobs:
           persist-credentials: false
       - uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd # v3
         with:
-          terraform_version: "1.9.8"
+          terraform_version: "1.16.6"
           terraform_wrapper: false
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
@@ -184,7 +188,7 @@ jobs:
           persist-credentials: false
       - uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd # v3
         with:
-          terraform_version: "1.9.8"
+          terraform_version: "1.16.6"
           terraform_wrapper: false
       - name: Terraform init
         run: python3 ../.github/scripts/tf_run.py --log "$RUNNER_TEMP/init.log" -- terraform init -input=false -lockfile=readonly
