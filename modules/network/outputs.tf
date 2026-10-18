@@ -5,3 +5,7 @@ output "deployed_vnets" {
 output "resource_group" {
   value = data.azurerm_resource_group.main.name
 }
+
+output "flow_log_ids" {
+  value = [for flow_log in azurerm_network_watcher_flow_log.main : flow_log.id]
+}

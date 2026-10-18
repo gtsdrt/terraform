@@ -305,3 +305,22 @@ resource "azurerm_management_lock" "log_analytics" {
   lock_level = "CanNotDelete"
   notes      = "零信任基线：集中日志工作区不可直接删除。terraform destroy 会先移除本锁。"
 }
+
+# ── VNet Flow Log（hub）──
+# flow log 属于 NetworkWatcherRG 的区域 network watcher，不在本资源组；
+# foundation 已为该身份授予 Flow Log Manager/Reader（仅 networkWatchers + flowLogs）。
+resource "azurerm_network_watcher_flow_log" "hub" {
+  name                 = "fl-${var.name_prefix}-hub"
+  network_watcher_name = "NetworkWatcher_${data.azurerm_resource_group.this.location}"
+  resource_group_name  = "NetworkWatcherRG"
+  location             = data.azurerm_resource_group.this.location
+  target_resource_id   = azurerm_virtual_network.hub.id
+  storage_account_id   = azurerm_storage_account.diagnostics.id
+  enabled              = true
+  version              = 2
+
+  retention_policy {
+    enabled = true
+    days    = var.flow_log_retention_days
+  }
+}
