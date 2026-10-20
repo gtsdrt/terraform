@@ -36,7 +36,11 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        dir: [tf-test, tf]
+        # 只检测 tf（生产）：tf-test 是临时的，每次部署后 cleanup-test 和
+        # 每 6 小时的 Test Recovery 都会把它 destroy 掉。空的 state 会让 drift plan
+        # 永远只看到 create（exit 2），于是这个 job 天天变红、成为纯噪声。
+        # 需要看测试环境差异时用 deploy.yml 的 plan-only 模式。
+        dir: [tf]
     env:
       ARM_CLIENT_ID: ${{ vars.TERRAFORM_PLAN_AZURE_CLIENT_ID }}
       PLAN_CLIENT_ID: ${{ vars.TERRAFORM_PLAN_AZURE_CLIENT_ID }}
@@ -60,6 +64,8 @@ jobs:
         run: python3 ../.github/scripts/tf_run.py --log "$RUNNER_TEMP/init.log" -- terraform init -input=false -lockfile=readonly
       - name: Detect drift without publishing raw output
         # Exit 1 on drift so a scheduled run turns red; only allowlisted settings are published.
+        # The sanitized report goes to both this log and the run Summary, so `gh run view --log`
+        # is enough to see which resources changed.
         run: python3 ../.github/scripts/drift_plan.py --directory . --var-file terraform.tfvars --plan "$RUNNER_TEMP/drift.tfplan" --log "$RUNNER_TEMP/drift.log" --summary "$GITHUB_STEP_SUMMARY"
       - name: Remove temporary plan and logs
         if: always()

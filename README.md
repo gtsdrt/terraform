@@ -79,7 +79,7 @@ gh workflow run deploy.yml --repo gtsdrt/terraform --ref main -f mode=full
 
 只有 main 可部署；命中 `tf/**`、`tf-test/**`、`modules/**` 或 `.github/**` 的 main push 自动 full。仅 README/docs 改动不自动部署。foundation 没有自动 apply 工作流，必须由管理员单独维护。
 
-部署 plan job 在发布摘要前运行**跨层权限预检**：计划中出现订阅级资源、无 Lock Manager 授权的 module 中的管理锁、或 plan/apply 身份相同，会直接失败，避免"plan 通过、apply 403"。每日 **Terraform Drift Detection** 用只读身份运行 `plan -detailed-exitcode`，只发布脱敏资源动作，发现漂移时运行变红；它不写 state、不 apply。
+部署 plan job 在发布摘要前运行**跨层权限预检**：计划中出现订阅级资源、无 Lock Manager 授权的 module 中的管理锁、或 plan/apply 身份相同，会直接失败，避免"plan 通过、apply 403"。每日 **Terraform Drift Detection** 用只读身份对生产 `tf` 运行 `plan -detailed-exitcode`，把脱敏资源动作同时写进日志和运行 Summary，发现漂移时运行变红；环境整体销毁（state 为空、全是 create）只输出 notice、保持绿色。它不写 state、不 apply。`tf-test` 不在矩阵里：它每次部署后都会被清理，空 state 只会天天误报。
 
 ```text
 管理员：准备 v2 backend → Terraform foundation 创建组与授权

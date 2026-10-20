@@ -29,6 +29,34 @@ def show_command(directory, plan):
     return ["terraform", f"-chdir={directory}", "show", "-json", str(plan)]
 
 
+def state_resources(module):
+    """Count resources in a prior_state root module, including nested child modules."""
+    if not isinstance(module, dict):
+        return 0
+    return len(module.get("resources") or []) + sum(
+        state_resources(child) for child in module.get("child_modules") or [])
+
+
+def planned_changes(document):
+    """Resource changes that are neither no-op nor a data-source read."""
+    return [item for item in document.get("resource_changes", [])
+            if item.get("change", {}).get("actions") not in (["no-op"], ["read"])]
+
+
+def not_deployed(document):
+    """The environment is torn down: empty prior state and nothing but creates planned.
+
+    Counts as "not deployed" rather than drift, so a deliberately destroyed
+    environment does not make the scheduled run fail every day. A partially
+    deployed state (some resources present) still counts as drift.
+    """
+    prior = document.get("prior_state") or {}
+    if state_resources((prior.get("values") or {}).get("root_module")):
+        return False
+    changes = planned_changes(document)
+    return bool(changes) and all(item["change"]["actions"] == ["create"] for item in changes)
+
+
 def write_summary(path, text):
     if not path:
         return
@@ -36,6 +64,18 @@ def write_summary(path, text):
         destination.write(text)
         if not text.endswith("\n"):
             destination.write("\n")
+
+
+def publish(document, summary_path):
+    """Emit the sanitized report to the log *and* the run Summary.
+
+    The Summary tab is invisible from `gh run view --log`, so a log that only says
+    "review the actions above" left operators with nothing to review.
+    """
+    text = plan_summary.summary(document)
+    write_summary(summary_path, text)
+    print(text)
+    return text
 
 
 def run(args):
@@ -53,7 +93,12 @@ def run(args):
         if state == "drift":
             shown = subprocess.run(show_command(args.directory, plan),
                                    check=True, stdout=subprocess.PIPE)
-            write_summary(args.summary, plan_summary.summary(json.loads(shown.stdout)))
+            document = json.loads(shown.stdout)
+            publish(document, args.summary)
+            if not_deployed(document):
+                print("::notice::Nothing is deployed (empty state). The create plan above is "
+                      "informational, not drift; the run stays green.")
+                return 0
             print("::warning::Drift detected. Review the sanitized resource actions above; raw output was withheld.")
             return 1
         labels = ", ".join(tf_run.categories(log.read_text(errors="replace")))
