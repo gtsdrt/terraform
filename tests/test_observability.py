@@ -62,6 +62,47 @@ class DriftPlanTests(unittest.TestCase):
             self.assertTrue(drift.publish(document, ""))
 
 
+class NotDeployedTests(unittest.TestCase):
+    @staticmethod
+    def document(*actions, prior=None):
+        return {
+            "prior_state": {"values": {"root_module": prior or {}}},
+            "resource_changes": [
+                {"address": f"resource.{index}", "type": "azurerm_virtual_network",
+                 "change": {"actions": list(action)}}
+                for index, action in enumerate(actions)],
+        }
+
+    def test_an_entirely_absent_environment_is_not_drift(self):
+        self.assertTrue(drift.not_deployed(self.document(("create",), ("create",), prior={})))
+
+    def test_missing_prior_state_is_treated_as_an_empty_state(self):
+        document = self.document(("create",))
+        del document["prior_state"]
+        self.assertTrue(drift.not_deployed(document))
+
+    def test_a_partially_deployed_state_is_still_drift(self):
+        prior = {"resources": [{"address": "azurerm_virtual_network.kept"}]}
+        self.assertFalse(drift.not_deployed(self.document(("create",), prior=prior)))
+
+    def test_nested_modules_count_as_deployed(self):
+        prior = {"child_modules": [{"resources": [{"address": "module.network.azurerm_virtual_network.main"}]}]}
+        self.assertFalse(drift.not_deployed(self.document(("create",), prior=prior)))
+
+    def test_only_creates_may_be_classified_as_not_deployed(self):
+        for actions in (("delete",), ("update",), ("delete", "create")):
+            with self.subTest(actions=actions):
+                self.assertFalse(drift.not_deployed(self.document(actions)))
+
+    def test_noop_entries_are_ignored(self):
+        # A no-op cannot occur with an empty state, but it must never disqualify a
+        # create-only plan if Terraform ever emits one alongside it.
+        self.assertTrue(drift.not_deployed(self.document(("no-op",), ("create",))))
+
+    def test_an_empty_plan_is_not_classified_as_not_deployed(self):
+        self.assertFalse(drift.not_deployed(self.document()))
+
+
 class DriftWorkflowTests(unittest.TestCase):
     def test_only_the_persistent_root_is_checked(self):
         # tf-test is destroyed after every deploy and every 6 hours, so including it

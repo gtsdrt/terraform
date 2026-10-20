@@ -117,7 +117,7 @@ python3 -m unittest discover -s tests -v
 | `name-conflict` | 名称占用/软删除/409 | 检查软删除保留期与命名（`deployment_generation`） |
 | 预检失败 | 订阅级资源/未授权锁/身份相同 | 移到 foundation 或补最小角色 |
 | 计划过期 | 超过 24h | 新建 full/destroy 运行 |
-| drift 变红（销毁后） | 配置仍有资源但 state 为空 | 这是“未部署”，不是配置漂移 |
+| drift 报“未部署”（销毁后） | state 为空、计划全部是 create | 输出 notice、运行保持绿色；这是未部署，不是漂移。部分资源仍在时报错才是漂移 |
 
 ## 10. 示例：新增一条 NSG 规则（`modules/network`）
 
