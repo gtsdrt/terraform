@@ -38,6 +38,18 @@ def write_summary(path, text):
             destination.write("\n")
 
 
+def publish(document, summary_path):
+    """Emit the sanitized report to the log *and* the run Summary.
+
+    The Summary tab is invisible from `gh run view --log`, so a log that only says
+    "review the actions above" left operators with nothing to review.
+    """
+    text = plan_summary.summary(document)
+    write_summary(summary_path, text)
+    print(text)
+    return text
+
+
 def run(args):
     plan = Path(args.plan)
     log = Path(args.log)
@@ -53,7 +65,7 @@ def run(args):
         if state == "drift":
             shown = subprocess.run(show_command(args.directory, plan),
                                    check=True, stdout=subprocess.PIPE)
-            write_summary(args.summary, plan_summary.summary(json.loads(shown.stdout)))
+            publish(json.loads(shown.stdout), args.summary)
             print("::warning::Drift detected. Review the sanitized resource actions above; raw output was withheld.")
             return 1
         labels = ", ".join(tf_run.categories(log.read_text(errors="replace")))

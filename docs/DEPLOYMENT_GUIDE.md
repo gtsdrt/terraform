@@ -133,7 +133,9 @@ gh workflow run deploy.yml --repo gtsdrt/terraform --ref main -f mode=plan-only
 
 ### 5.1 漂移检测
 
-`Terraform Drift Detection` 每天 03:23 UTC（以及手动触发）用 plan 只读身份对 `tf-test`、`tf` 运行 `terraform plan -detailed-exitcode`。它不写 state、不 apply，只在运行 Summary 发布与部署相同的脱敏资源动作；发现差异时该运行变为 failure。
+`Terraform Drift Detection` 每天 03:23 UTC（以及手动触发）用 plan 只读身份对 `tf`（生产）运行 `terraform plan -detailed-exitcode`。它不写 state、不 apply，把与部署相同的脱敏资源动作同时写进运行日志和 Summary；发现差异时该运行变为 failure。
+
+只检测 `tf`：`tf-test` 是临时环境，每次部署后 `cleanup-test`、以及每 6 小时的 `Terraform Test Recovery` 都会把它 destroy 掉，空 state 只会让 plan 永远显示 create（exit 2）而天天变红。需要看测试环境的差异时，用 `deploy.yml` 的 `plan-only` 模式。
 
 处理方式：先看 Summary 中的资源动作，再判断是代码漂移（重新部署）还是手工变更（回滚或纳入代码）。原始 plan 和 state 不进入公开日志；需要细节时由授权身份在受限位置复现。
 
@@ -287,7 +289,7 @@ Key Vault 销毁后名称在软删除保留期内仍被占用。当前生产配�
 | reviewer 无法批准 production | 进入具体运行的 Summary，用 `gh run view <id> --json triggering_actor` 确认发起账号；`prevent_self_review` 下用另一个审批账号批准。禁止自行审批，不使用管理员绕过 |
 | 计划过期 / artifact 不存在 | 新建 full/destroy 运行并审查新计划；不复用或手动替换旧 artifact |
 | 跨层权限预检失败 | 计划含订阅级资源、无 Lock Manager 授权的 module 中的锁，或 plan/apply 身份相同；把这些变更移到 foundation 或调整授权 scope，不要绕过预检 |
-| 漂移检测运行变红 | 查看该运行 Summary 的脱敏资源动作；确认是代码漂移还是手工变更，再重新部署或回滚 |
+| 漂移检测运行变红 | 查看该运行日志或 Summary 中的脱敏资源动作；确认是代码漂移还是手工变更，再重新部署或回滚 |
 | 测试失败或清理失败 | 生产会停止；先诊断错误，再检查恢复任务，修复后创建新运行 |
 | 整条运行取消后测试资源仍存在 | 正常取消可能中断清理；等待独立恢复，或确认写入队列释放后手动运行 Test Recovery |
 | `--slurp` 不能与 `--jq` 同用 | 确认已使用包含分页修复的 v2 配置及新运行；分页输出由外部 jq 处理 |
