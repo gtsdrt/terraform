@@ -77,7 +77,7 @@ backend 使用 Entra ID，现有 state 账户的 Shared Key/匿名 Blob 访问�
 
 PR 检查不获得 Azure 凭据、OIDC 或 state。foundation mock 测试验证新组名、角色动作和 scope，并纳入必需的 Security Checks；普通 validate 还覆盖三个根模块。
 
-部署 plan job 在发布摘要前运行静态**跨层权限预检**：订阅级资源（Defender pricing、订阅诊断、role definition/assignment 等）、未获 Lock Manager 授权的 module 里的管理锁、以及 plan/apply 身份相同都会让计划失败。这些类别的变更应放在 foundation。每日 **Terraform Drift Detection** 用 plan 只读身份对生产 `tf` 执行 `plan -detailed-exitcode`，把脱敏摘要同时写进日志和 Summary，漂移时运行变红；环境整体销毁（state 为空、计划全是 create）判为“未部署”，只输出 notice 并保持绿色。它不写 state、不 apply。`tf-test` 由每次部署后的清理和每 6 小时恢复清空，纳入 drift 只会因“未部署”天天变红，因此不在矩阵中。
+部署 plan job 在发布摘要前运行静态**跨层权限预检**：订阅级资源（Defender pricing、订阅诊断、role definition/assignment 等）、未获 Lock Manager 授权的 module 里的管理锁、以及 plan/apply 身份相同都会让计划失败。这些类别的变更应放在 foundation。每日 **Terraform Drift Detection** 用 plan 只读身份对生产 `tf` 执行 `plan -detailed-exitcode`，把脱敏摘要同时写进日志和 Summary，漂移时运行变红；环境整体销毁（state 无 managed 资源——data source 销毁后仍保留，不计入——计划全是 create）判为“未部署”，只输出 notice 并保持绿色。它不写 state、不 apply。`tf-test` 由每次部署后的清理和每 6 小时恢复清空，纳入 drift 只会因“未部署”天天变红，因此不在矩阵中。
 
 ## 写入串行与资源生命周期
 
