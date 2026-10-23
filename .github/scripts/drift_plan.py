@@ -30,10 +30,17 @@ def show_command(directory, plan):
 
 
 def state_resources(module):
-    """Count resources in a prior_state root module, including nested child modules."""
+    """Count *managed* resources in a prior_state root module, including nested child modules.
+
+    Data sources (mode "data") survive a full destroy: they are re-read on the
+    next plan and stay in prior_state. Counting them makes a torn-down
+    environment look partially deployed, so the run is misclassified as drift.
+    """
     if not isinstance(module, dict):
         return 0
-    return len(module.get("resources") or []) + sum(
+    managed = [r for r in module.get("resources") or []
+               if isinstance(r, dict) and r.get("mode", "managed") != "data"]
+    return len(managed) + sum(
         state_resources(child) for child in module.get("child_modules") or [])
 
 
